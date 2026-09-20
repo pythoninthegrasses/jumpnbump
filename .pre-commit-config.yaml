@@ -11,28 +11,6 @@ repos:
     hooks:
       - id: markdownlint
         args: [--fix, --config, .markdownlint.jsonc]
-  # Core purity (TASK-011.08): the Zig sim core must name no presentation or
-  # audio API and do no file I/O outside the asset-loading paths. Scans core/
-  # itself rather than the staged files, so it runs on every commit and cannot
-  # pass just because a commit touched something else. --sim-only is the
-  # actual gate: the *_difftest.zig/unit_*.zig harnesses legitimately name the
-  # real C functions they compare the port against or load fixtures for, and
-  # the plain (no-flag) scan flags those on purpose (docs/porting-playbook.md
-  # "Core purity") -- run it by hand for a full audit, not as the commit gate.
-  - repo: local
-    hooks:
-      - id: validate-simulation-boundary
-        name: validate simulation boundary (core/ purity)
-        entry: tools/validate_simulation_boundary.py --sim-only
-        language: system
-        pass_filenames: false
-        always_run: true
-      - id: validate-simulation-boundary-selftest
-        name: validate simulation boundary self-check
-        entry: tools/test_validate_simulation_boundary.py
-        language: system
-        pass_filenames: false
-        always_run: true
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:

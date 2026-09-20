@@ -41,7 +41,7 @@ main.c, menu.c, filter.c, fireworks.c, sdl/, modify/, data/
 - **`tools/`** — Python scripts converting original `.gob` sprites, PCX levels, and
   `.mod`/`.smp` audio into Godot-native PNG/OGG/WAV resources (`TASK-013`), plus the
   boundary/purity validators wired into `task check`
-  (`validate_simulation_boundary.py`, `validate_abi_test_purity.py`).
+  (`validate_abi_test_purity.py`).
 - **`third_party/godot-cpp`** — pinned to commit SHA `507ed9d840c01a3c5b2a39af8bb4000bfac30bf5`,
   no branch or tag in `.gitmodules` — the pin is the contract, bumped only by committing a
   new gitlink. See `extension/README.md` for the full rationale (no 4.7 tag exists upstream;

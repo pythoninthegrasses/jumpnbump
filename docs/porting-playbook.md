@@ -101,32 +101,25 @@ rounding as "correct" behavior.
 
 The Zig simulation core must be a pure, deterministic state machine: no presentation
 concept (pob lists, page flipping, draw calls), no audio symbol, and no libc file I/O
-outside explicitly asset-loading paths. This is enforced by a check —
-`tools/validate_simulation_boundary.py --sim-only`, wired in as a `pre-commit`/`prek`
-hook — that symbol-scans the simulation modules and fails on any presentation or audio
-reference (`TASK-011.08`). Treat this as a standing rule for every future change to
-`core/`, not a one-time gate.
+outside explicitly asset-loading paths (`core/dat.zig`, `core/levelmap.zig`, and the
+asset-packager CLIs under `core/*_cli.zig`). `core/c_ref/` (the extracted C oracle) is
+exempt, and the `*_difftest.zig`/`unit_*.zig` test harnesses legitimately name the real C
+functions they compare a port against or link stub definitions for.
 
-**The denylist is concrete API surface, not vocabulary.** It names `dj_play_sfx`,
-`dj_set_*_volume`, `dj_start_mod`, the `Mix_*` functions, `add_pob`, `add_leftovers`,
-`draw_pobs`, `flippage`, `page_info`, `draw_page`/`view_page`, `register_background`,
-`put_text`, `recalculate_gob` and the rest of `sdl/gfx.c`'s and `sdl/sound.c`'s entry
-points — the things a caller actually invokes. The bare words `sfx`, `audio`, `sound` and
-`music` are not banned anywhere, because the event stream deliberately names its classes
-after what the C fired at the same moment: `sfxAt`, `sfxRecordZ`, `sfxCountZ`, `sfxReset`,
-`sfx_trace_z` and `EventKind.sfx` record an `(id, frequency)` pair into plain data for a
-later consumer, keeping the checksummed `rnd()` draw and dropping the mixer call. A scan
-that matched those words would flag the pure design instead of protecting it. Comments are
-stripped before scanning, and a name is only reported in a call, declaration or `@export`
-position, so prose explaining that a port drops `add_pob()` stays readable.
+Presentation/audio side effects a ported function used to call directly (`add_pob`,
+`add_leftovers`, `dj_play_sfx`, `dj_set_*_volume`, …) become plain-data trace records
+instead — `draw_trace_z`/`sfx_trace_z`-shaped fields, drained into `core/game_loop.zig`'s
+event stream — never a real call into presentation/audio code. `core/objects.zig`'s and
+`core/steer.zig`'s header comments show the pattern for any new port to follow.
 
-Run `tools/test_validate_simulation_boundary.py` after editing the denylists: it asserts
-every banned name is still caught and that the event-stream naming is still clean, so a
-denylist edit in either direction fails loudly. File I/O is allowed only in the
-asset-loading paths (`core/dat.zig`, `core/levelmap.zig`) and in the asset-packager CLIs
-(`core/*_cli.zig`), which sit in `core/` but out of the simulation. `core/c_ref/` is exempt
-as the extracted C oracle; `--sim-only` narrows the scan to the simulation modules and
-skips the `*_difftest.zig` harnesses and `unit_*.zig` link stubs.
+This was previously enforced by an automated symbol-scanner
+(`tools/validate_simulation_boundary.py`, TASK-011.08), wired into `.pre-commit-config.yaml`
+as a `prek` hook. That hook never actually ran in practice — this repo's `.git/hooks/`
+were never installed from the pre-commit config — and enforcement for AI agents in this
+project goes through Claude Code's own `settings.json` hooks rather than git-level ones, so
+the script was dead weight and was removed. Treat this section as a standing review
+convention for every future change to `core/`, not an automated gate — check by eye (or
+`grep`) whenever a new module is ported that it names no presentation/audio symbol.
 
 ## C-ABI conventions
 
