@@ -47,7 +47,7 @@ fn addCliTools(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
 // Tier-A unit tests for ported Zig modules (docs/porting-playbook.md).
 // Empty until TASK-011.* ports a main.c subsystem into its own core/*.zig
 // module; each porting subtask appends its module's test file here.
-const unit_test_files = [_][]const u8{ "dat.zig", "gob.zig", "pcx.zig", "levelmap.zig", "fixed16.zig", "world.zig", "flies.zig", "steer.zig", "objects.zig", "collision.zig", "game_loop.zig", "asset_runtime.zig", "mod_player.zig" };
+const unit_test_files = [_][]const u8{ "dat.zig", "gob.zig", "pcx.zig", "levelmap.zig", "fixed16.zig", "world.zig", "flies.zig", "steer.zig", "objects.zig", "collision.zig", "game_loop.zig", "asset_runtime.zig", "mod_player.zig", "fireworks.zig" };
 
 fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const step = b.step("test", "Run Tier-A unit tests for ported Zig modules");
@@ -113,7 +113,7 @@ fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
         // test root. add_object lands on steer.zig's object (the port
         // collision.zig reaches through extern fn), which drags steer.zig's
         // own externs onto the same resolution list.
-        if (std.mem.eql(u8, file, "collision.zig")) {
+        if (std.mem.eql(u8, file, "collision.zig") or std.mem.eql(u8, file, "fireworks.zig")) {
             const harness_mod = b.createModule(.{
                 .target = target,
                 .optimize = optimize,
@@ -136,8 +136,11 @@ fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
         // TASK-011.02: steer.zig (and every future port that reaches
         // another subsystem's C-named global through the playbook's extern
         // pattern — extern fn rnd, extern var is_server) needs those names
-        // resolvable when its module is built standalone.
-        if (std.mem.eql(u8, file, "steer.zig") or std.mem.eql(u8, file, "collision.zig")) {
+        // resolvable when its module is built standalone. TASK-017.02's
+        // fireworks.zig has the identical dependency profile as collision.zig
+        // (rnd, add_object/update_objects via objects.zig, player_anims via
+        // steer.zig above), so it joins this same list.
+        if (std.mem.eql(u8, file, "steer.zig") or std.mem.eql(u8, file, "collision.zig") or std.mem.eql(u8, file, "fireworks.zig")) {
             mod.addObjectFile(rnd_native.getEmittedBin());
             // The Zig TU exporting is_server/is_net for standalone module
             // builds (see core/unit_net_globals.zig's header comment): compiled
@@ -241,7 +244,7 @@ fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
 // first per-tick stateful replay: the C reference is extracted verbatim from
 // main.c by core/c_ref/extract_steered.py into core/c_ref/steer.c. Corpus-
 // replay entries join as later TASK-011.* ports land.
-const diff_test_files = [_][]const u8{ "rnd_difftest.zig", "cpu_move_difftest.zig", "flies_difftest.zig", "steer_difftest.zig", "objects_difftest.zig", "collision_difftest.zig", "game_loop_difftest.zig" };
+const diff_test_files = [_][]const u8{ "rnd_difftest.zig", "cpu_move_difftest.zig", "flies_difftest.zig", "steer_difftest.zig", "objects_difftest.zig", "collision_difftest.zig", "game_loop_difftest.zig", "fireworks_difftest.zig" };
 
 fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const step = b.step("difftest", "Run Tier-B differential tests against renamed C references");
@@ -319,6 +322,18 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
     const collision_ref = compileRenamedCRef(b, target, optimize, "collision_c_ref", "c_ref/collision.c", &.{
         "processKillPacket",
     });
+    // TASK-017.02: fireworks.c is split into fireworks_init_ref/
+    // fireworks_step_ref by core/c_ref/extract_fireworks.py (see that
+    // script's docstring). add_object/update_objects are unrenamed
+    // (harness-owned, resolving to core/objects.zig's real exports, same as
+    // objects_ref above) so a mismatch can only come from fireworks.zig's
+    // own new logic. sanitize_c = .off for the same reason objects_ref
+    // needs it: fireworks mode zeroes ban_map for its whole run, and the
+    // shared update_objects() still reads it at raw indices.
+    const fireworks_ref = compileRenamedCRefSanitized(b, target, optimize, "fireworks_c_ref", "c_ref/fireworks.c", &.{
+        "fireworks_init_ref",
+        "fireworks_step_ref",
+    }, .off);
 
     for (diff_test_files) |file| {
         const mod = b.createModule(.{
@@ -441,6 +456,27 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
                 }),
             });
             mod_test.root_module.addObjectFile(gl_dt_draw_obj.getEmittedBin());
+        }
+        // TASK-017.02: fireworks_difftest.zig @imports both core/objects.zig
+        // (add_object/update_objects) and core/steer.zig (player_anims), the
+        // same multi-import shape game_loop_difftest.zig has -- so
+        // sim_harness.c is pre-compiled as its own object rather than added
+        // straight into this root module, for the identical reason: letting
+        // ordinary weak-symbol override resolve player_raw/objects_raw/
+        // ban_map_raw at the final link step instead of inside Zig's own
+        // module graph.
+        if (std.mem.eql(u8, file, "fireworks_difftest.zig")) {
+            mod_test.root_module.linkSystemLibrary("m", .{});
+            const fw_dt_harness_mod = b.createModule(.{
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+            });
+            fw_dt_harness_mod.addCSourceFile(.{ .file = b.path("c_ref/sim_harness.c"), .flags = &.{"-fwrapv"} });
+            const fw_dt_harness_obj = b.addObject(.{ .name = "fireworks_dt_harness", .root_module = fw_dt_harness_mod });
+            mod_test.root_module.addObjectFile(fw_dt_harness_obj.getEmittedBin());
+            mod_test.root_module.addObjectFile(rnd_ref);
+            mod_test.root_module.addObjectFile(fireworks_ref);
         }
         step.dependOn(&b.addRunArtifact(mod_test).step);
     }
