@@ -4,12 +4,12 @@ title: 'Enforce core purity: no presentation or audio symbols, no libc I/O in th
 status: Done
 assignee: []
 created_date: '2026-09-15 19:15'
+updated_date: '2026-09-20 09:46'
 labels: []
 milestone: m-3
 dependencies: []
 parent_task_id: TASK-011
 priority: medium
-type: task
 ordinal: 34000
 ---
 
@@ -21,13 +21,18 @@ Add a build-time or CI check (following neo_snake's tools/validate_audio_boundar
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 A CI-wired check greps or symbol-scans core/ and fails on any presentation or audio symbol reference from the sim module
-- [x] #2 The check passes on the completed Phase 3 core
+- [ ] #1 A CI-wired check greps or symbol-scans core/ and fails on any presentation or audio symbol reference from the sim module (REMOVED 2026-09-20: the tool/hook was dead weight -- never actually installed as a git hook in this repo -- so it was deleted; see Implementation Notes' follow-up. The underlying rule is now a manual-review convention, not an automated gate.)
+- [ ] #2 The check passes on the completed Phase 3 core
 - [x] #3 The check is documented in docs/porting-playbook.md as a standing rule for future changes
 <!-- AC:END -->
 
+
+
+
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Added `tools/validate_simulation_boundary.py` (PEP 723 / `uv run --script`, following
 `~/git/neo_snake/tools/validate_audio_boundary.py`) plus
 `tools/test_validate_simulation_boundary.py`, both wired into
@@ -110,3 +115,6 @@ could have changed simulation behavior — confirmed, not assumed); `--sim-only`
 verified `.draw`/`.sfx_volume` events actually fire (spring/butterfly draws every tick, one
 volume event per tick) by temporarily instrumenting `game_loop_difftest.zig` against the
 `07-spring-bounce` corpus trace, then removing the instrumentation before commit.
+
+**2026-09-20 follow-up: the automated check was removed.** tools/validate_simulation_boundary.py + tools/test_validate_simulation_boundary.py deleted, and the two prek hook entries dropped from .pre-commit-config.yaml. Reason: the hook never actually ran -- this repo's .git/hooks/ were never installed from .pre-commit-config.yaml, and enforcement for AI agents in this project goes through Claude Code's own settings.json hooks rather than git-level pre-commit, so the script was dead weight (confirmed no .git/hooks/pre-commit exists). docs/porting-playbook.md's "Core purity" section is rewritten to describe this as a standing manual-review convention instead of an automated gate. AC#1 (a CI-wired check) no longer holds as literally stated -- the rule itself (no presentation/audio symbols, no libc I/O outside asset-loading paths in core/) is unaffected and still followed by every ported module's own draw_trace_z/sfx_trace_z pattern; only the automated enforcement mechanism is gone. Note also: at removal time, tools/validate_simulation_boundary.py --sim-only was still reporting its long-standing 2 pre-existing add_pob/add_leftovers no-op-stub findings in core/abi.zig (unchanged since at least TASK-016.01/TASK-016.03, confirmed not a regression there) -- left as-is, out of scope for this removal.
+<!-- SECTION:NOTES:END -->
