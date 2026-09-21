@@ -216,6 +216,46 @@ Info.plist missing or invalid, new Info.plist generated` — is expected and not
 `Contents/Info.plist` (that nesting is only required for *dependency* frameworks), and Godot
 regenerates one at export time regardless.
 
+## macOS screensaver signing (TASK-017.04)
+
+`task release:ship-screensaver` is the `.saver`-bundle counterpart to `ship-macos`, kept in
+`taskfiles/release.yml` (not `taskfiles/screensaver.yml`) so it can call
+`keychain-setup`/`keychain-cleanup`/`decode-api-key`/`cleanup-api-key` directly rather than
+reaching across a Task namespace — those four steps are fully generic and reused as-is, no
+Godot/DMG coupling. It runs, in order: `keychain-setup`, `sign-screensaver` (builds
+`JumpnbumpFireworks.saver` via `screensaver:build`, ad hoc-signed by `screensaver/build.sh`,
+then re-signs it with `APPLE_SIGNING_IDENTITY` and `--options runtime`), `verify-screensaver-signing`,
+`decode-api-key`, `notarize-screensaver`. `keychain-cleanup` and `cleanup-api-key` run via
+`defer:`, same LIFO teardown order as `ship-macos`.
+
+Three differences from the Godot `.app`/DMG pipeline, all following from `decision-001`
+(native Swift/Metal, no Godot involvement) and TASK-017.03's own research:
+
+- **No DMG mount.** `verify-screensaver-signing` runs `codesign --verify --strict` and the
+  hardened-runtime flag check directly against the `.saver` bundle. `libjumpnbump.a` is
+  statically linked into the bundle's own binary (`screensaver/build.sh`'s `swiftc -all_load`
+  link), so there's no nested framework to check separately the way `export-macos`'s embedded
+  GDExtension `.framework` needs.
+- **No `launchctl asuser` bridge.** `sign-screensaver`'s `codesign` call isn't nested inside
+  another tool's own shell-out (unlike Godot's internal signing during `export-macos`), so it
+  inherits the calling shell's security-session context directly — the same reasoning
+  `verify-signing`'s plain `codesign` calls already rely on. No sudoers prerequisite needed for
+  this pipeline even over SSH.
+- **The bundle is zipped for submission, then stapled directly.** `notarytool` can't accept a
+  bare `.saver` bundle, so `notarize-screensaver` wraps it first via `ditto -c -k --keepParent`.
+  `stapler staple` and the final `spctl -a -vv --type install` Gatekeeper check then run against
+  the `.saver` bundle itself, not the zip — `--type install` is the assessment type for a
+  loadable bundle, where `notarize`'s own `--type open` is for something the user double-clicks
+  to launch.
+
+Not wired into CI (same treatment as `release:*`): the self-hosted macOS runner's Xcode/credentials
+situation for this path is untested, and `ci:macos-check` stays the CI entrypoint gate.
+
+Confirmed end to end against live Apple infrastructure: real notarization (Accepted), real
+stapling, `spctl -a -vv --type install` reporting `accepted` / `source=Notarized Developer ID`,
+and `codesign --display --verbose=4` on the stapled bundle showing `flags=0x10000(runtime)` under
+a `Developer ID Application` authority chain.
+
 ## Constraints
 
 - **No allocator, no libc in `core/` library code**, outside `core/abi.zig` — this is a

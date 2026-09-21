@@ -9,6 +9,8 @@ vars:
   AUTH_KEY_PATH: "/tmp/jumpnbump_auth_key.p8"
   APP_GLOB: "{{.ROOT_DIR}}/game/build/macos/*.app"
   DMG_GLOB: "{{.ROOT_DIR}}/game/build/macos/*.dmg"
+  SAVER_BUNDLE: "{{.ROOT_DIR}}/screensaver/.build/JumpnbumpFireworks.saver"
+  SAVER_ZIP: "{{.ROOT_DIR}}/screensaver/.build/JumpnbumpFireworks.saver.zip"
 
 tasks:
   ship-macos:
@@ -234,3 +236,118 @@ tasks:
         dmg=$(ls {{.DMG_GLOB}} | head -n1)
         echo "verifying Gatekeeper assessment (AC#1): $dmg"
         spctl -a -vv --type open --context context:primary-signature "$dmg"
+
+  ship-screensaver:
+    desc: "Sign, verify, and notarize JumpnbumpFireworks.saver end to end (TASK-017.04)"
+    summary: |
+      task release:ship-screensaver
+
+      The .saver-bundle counterpart to ship-macos, kept in this file
+      (rather than taskfiles/screensaver.yml) so it can call
+      keychain-setup/keychain-cleanup/decode-api-key/cleanup-api-key
+      directly instead of reaching across a Task namespace. Order:
+      ephemeral keychain -> sign-screensaver (screensaver:build, then an
+      explicit codesign against the built bundle -- there is no Godot
+      export step to sign it for us) -> verify-screensaver-signing ->
+      decode the App Store Connect API key -> notarize-screensaver ->
+      defer-cleanup (keychain first registered, api key cleanup second,
+      so Task's LIFO defer order tears down api key material before the
+      keychain, same as ship-macos).
+    platforms: [darwin]
+    cmds:
+      - task: keychain-setup
+      - defer: { task: keychain-cleanup }
+      - task: sign-screensaver
+      - task: verify-screensaver-signing
+      - task: decode-api-key
+      - defer: { task: cleanup-api-key }
+      - task: notarize-screensaver
+
+  sign-screensaver:
+    desc: "Build and sign JumpnbumpFireworks.saver with the Developer ID identity and hardened runtime (AC#1)"
+    summary: |
+      task release:sign-screensaver
+
+      Builds the bundle via screensaver:build (ad hoc-signed by
+      screensaver/build.sh) then re-signs it in place with
+      APPLE_SIGNING_IDENTITY and --options runtime, exactly as Godot's
+      own export preset does for the .app in export-macos -- hardened
+      runtime is required for notarization to succeed. No launchctl
+      asuser bridge is needed here even over SSH: unlike export-macos,
+      this codesign call is not nested inside another tool's own
+      shell-out, so it inherits this task's own security-session context
+      directly, the same reasoning verify-signing's plain codesign calls
+      already rely on.
+    platforms: [darwin]
+    deps: [":screensaver:build"]
+    preconditions:
+      - sh: 'test -n "${APPLE_SIGNING_IDENTITY:-}"'
+        msg: "APPLE_SIGNING_IDENTITY is not set. Export it (Common Name of the Developer ID Application certificate) before running task release:ship-screensaver."
+    cmds:
+      - codesign --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" {{.SAVER_BUNDLE}}
+
+  verify-screensaver-signing:
+    desc: "Independently verify JumpnbumpFireworks.saver is signed with the hardened runtime (AC#2)"
+    summary: |
+      task release:verify-screensaver-signing
+
+      Verifies the .saver bundle directly -- no DMG mount step, unlike
+      verify-signing. libjumpnbump.a is statically linked into the
+      bundle's own binary (screensaver/build.sh's swiftc -all_load
+      link), so there's no nested framework to check separately the way
+      export-macos's embedded GDExtension .framework needs.
+    platforms: [darwin]
+    preconditions:
+      - sh: test -d {{.SAVER_BUNDLE}}
+        msg: "No .saver bundle found at {{.SAVER_BUNDLE}}. Run 'task release:sign-screensaver' first."
+    cmds:
+      - |
+        echo "verifying bundle signature: {{.SAVER_BUNDLE}}"
+        codesign --verify --strict --verbose=2 {{.SAVER_BUNDLE}}
+
+        echo "verifying bundle hardened runtime flag"
+        bundle_display=$(codesign --display --verbose=4 {{.SAVER_BUNDLE}} 2>&1)
+        if ! echo "$bundle_display" | grep -q 'flags=0x[0-9a-fA-F]*(runtime)'; then
+          echo "error: .saver bundle is not signed with the hardened runtime flag" >&2
+          echo "--- codesign --display --verbose=4 output ---" >&2
+          echo "$bundle_display" >&2
+          exit 1
+        fi
+
+  notarize-screensaver:
+    desc: "Notarize and staple JumpnbumpFireworks.saver, then confirm Gatekeeper acceptance (AC#3, AC#4)"
+    summary: |
+      task release:notarize-screensaver
+
+      notarytool can't accept a bare .saver bundle directly, so this
+      zips it first (ditto -c -k --keepParent, preserving the bundle's
+      directory structure inside the zip the way Apple's own docs for
+      notarizing non-app bundles require), submits the zip, then staples
+      the .saver bundle itself -- not the zip, which notarytool discards
+      after submission and which stapler can't attach a ticket to
+      anyway. Finishes with spctl -a -vv --type install (AC#4), the
+      Gatekeeper check type for a loadable bundle rather than
+      notarize's own --type open (which is for something the user
+      double-clicks to launch).
+    platforms: [darwin]
+    preconditions:
+      - sh: test -d {{.SAVER_BUNDLE}}
+        msg: "No .saver bundle found at {{.SAVER_BUNDLE}}. Run 'task release:sign-screensaver' first."
+      - sh: test -f {{.AUTH_KEY_PATH}}
+        msg: "Apple API key not found at {{.AUTH_KEY_PATH}}. Run 'task release:decode-api-key' first."
+      - sh: 'test -n "${APPLE_API_KEY:-}"'
+        msg: "APPLE_API_KEY is not set."
+      - sh: 'test -n "${APPLE_API_ISSUER:-}"'
+        msg: "APPLE_API_ISSUER is not set."
+    cmds:
+      - rm -f {{.SAVER_ZIP}}
+      - ditto -c -k --keepParent {{.SAVER_BUNDLE}} {{.SAVER_ZIP}}
+      - xcrun notarytool submit {{.SAVER_ZIP}}
+          --key {{.AUTH_KEY_PATH}}
+          --key-id "$APPLE_API_KEY"
+          --issuer "$APPLE_API_ISSUER"
+          --wait
+      - xcrun stapler staple {{.SAVER_BUNDLE}}
+      - |
+        echo "verifying Gatekeeper assessment (AC#4): {{.SAVER_BUNDLE}}"
+        spctl -a -vv --type install {{.SAVER_BUNDLE}}

@@ -1,10 +1,10 @@
 ---
 id: TASK-017
 title: Deliver a macOS fireworks screensaver
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-15 19:14'
-updated_date: '2026-09-21 19:06'
+updated_date: '2026-09-21 20:01'
 labels: []
 milestone: m-8
 dependencies: []
