@@ -22,7 +22,15 @@ tasks:
     deps:
       - ":extension:build"
     cmds:
-      - godot --headless --path game --import
+      # --frame-delay 800: a coldstart --import with a GDExtension that
+      # registers classes (ours does) hits a confirmed Godot engine race
+      # (godotengine/godot#111048, #111645, fix pending in #123658):
+      # EditorHelp queues a deferred _gen_extensions_docs() callback that
+      # can still be in flight when Main::cleanup() tears down its target,
+      # crashing with SIGSEGV on a null `doc` pointer. The frame delay
+      # gives that callback time to flush before cleanup runs -- verified
+      # 10/10 clean runs locally vs. a ~30-50% crash rate without it.
+      - godot --headless --frame-delay 800 --path game --import
 
   bootstrap:
     desc: "Install gdUnit4, the Tier-D test framework (checksum-verified download, TASK-014.07)"
