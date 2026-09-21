@@ -4,6 +4,7 @@ title: Deliver a macOS fireworks screensaver
 status: To Do
 assignee: []
 created_date: '2026-09-15 19:14'
+updated_date: '2026-09-21 19:06'
 labels: []
 milestone: m-8
 dependencies: []
@@ -20,7 +21,7 @@ Parent task. Port fireworks.c's screensaver mode (bouncing/exploding rabbits, pa
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The delivery spike task is complete and has produced a written recommendation before any screensaver-specific UI work begins
-- [ ] #2 fireworks.c's behavior is ported to the Zig core and verified against the C oracle
-- [ ] #3 The chosen delivery mechanism installs and runs as a real macOS screensaver via System Settings
+- [x] #1 The delivery spike task is complete and has produced a written recommendation before any screensaver-specific UI work begins
+- [x] #2 fireworks.c's behavior is ported to the Zig core and verified against the C oracle
+- [x] #3 The chosen delivery mechanism installs and runs as a real macOS screensaver via System Settings
 <!-- AC:END -->
