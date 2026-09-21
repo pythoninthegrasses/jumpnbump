@@ -47,7 +47,7 @@
 //! static library `zig build abi` produces would otherwise expose
 //! `steer_players`, `rnd`, `is_server`, `player_anims`, `pogostick`, and
 //! more alongside the `jnb_*` surface. core/build.zig's `abi` step runs a
-//! post-link `objcopy --keep-global-symbols` pass (core/localize_abi_symbols.sh)
+//! post-link `objcopy --keep-global-symbols` pass (core/localize_abi_symbols.py)
 //! to demote everything else to a local symbol — see that script's header
 //! comment for why neo_snake never needed an equivalent step.
 const std = @import("std");

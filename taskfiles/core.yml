@@ -7,7 +7,7 @@ version: "3.0"
 tasks:
   _install-macos-objcopy:
     internal: true
-    desc: "Install an objcopy-compatible tool (TASK-012.02's localize_abi_symbols.sh) via Homebrew"
+    desc: "Install an objcopy-compatible tool (TASK-012.02's localize_abi_symbols.py) via Homebrew"
     platforms: [darwin]
     cmds:
       - brew install llvm

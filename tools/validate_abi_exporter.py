@@ -21,7 +21,7 @@ predating this ABI and required for it to keep working. A literal "any
 export fn" ban would immediately fail against that entirely legitimate,
 already-shipped code. The real invariant -- that only abi.zig's build output
 exposes the jnb_ symbol surface -- is enforced independently and more
-strongly by core/localize_abi_symbols.sh's post-link `nm -g` gate, which
+strongly by core/localize_abi_symbols.py's post-link `nm -g` gate, which
 catches every symbol regardless of source file; this script instead exists
 so a future contributor who mistakenly adds a jnb_-named export somewhere
 else in core/ gets a fast, source-level failure without waiting on a build.

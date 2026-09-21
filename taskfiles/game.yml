@@ -12,6 +12,15 @@ tasks:
 
   import:
     desc: "Headless Godot import of the game/ project (TASK-009's export-macos needs the .godot/ import cache populated first)"
+    summary: |
+      task game:import
+
+      Depends on the GDExtension shim being built first: without it,
+      the reimport pass itself throws GDExtension dynamic-library-not-
+      found errors for every script that references a native class
+      (e.g. presentation/main.gd's JumpnbumpAssetLoader).
+    deps:
+      - ":extension:build"
     cmds:
       - godot --headless --path game --import
 
@@ -35,6 +44,8 @@ tasks:
       smoke scripts (test_tick_driver.gd and friends, TASK-014.02-.06) via
       `godot --headless --script`, since those predate gdUnit4 and still
       carry real coverage.
+    deps:
+      - import
     cmds:
       - godot --headless --path game --script res://tests/test_tick_driver.gd
       - godot --headless --path game --script res://tests/test_sprite_geometry.gd

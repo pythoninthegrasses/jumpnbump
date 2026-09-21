@@ -80,8 +80,10 @@ tasks:
       Runs every reproducibility/test gate that's portable across CI
       platforms: the asset pipeline's checks, the Godot build's
       simulation-boundary check, and its full test suite. Does NOT
-      build or run the legacy SDL binary (see `task legacy:build`) or
-      the GDExtension shim (see `task extension:build` / `task run`).
+      build or run the legacy SDL binary (see `task legacy:build`).
+      It does build the GDExtension shim for the current platform
+      (via game:test -> game:import -> extension:build), since the
+      test suite exercises native classes (e.g. SimWorld.OK).
 
       Example:
         task check

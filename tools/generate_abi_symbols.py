@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Extract the frozen jnb_* symbol names from include/jumpnbump.h.
 
-Used by core/localize_abi_symbols.sh's post-link objcopy
+Used by core/localize_abi_symbols.py's post-link objcopy
 --keep-global-symbols pass (TASK-012.02): every name this prints is kept
 global in the built static library; everything else gets localized. Strips
 C block/line comments first so a name mentioned only in prose never leaks

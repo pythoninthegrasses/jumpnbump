@@ -583,8 +583,8 @@ fn addAbiStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     // global symbol not matching the frozen jnb_ ABI surface to local,
     // post-link. neo_snake never needed an equivalent step: its own modules
     // never use bare `export fn` outside abi.zig.
-    const localize = b.addSystemCommand(&.{"sh"});
-    localize.addFileArg(b.path("localize_abi_symbols.sh"));
+    const localize = b.addSystemCommand(&.{ "uv", "run" });
+    localize.addFileArg(b.path("localize_abi_symbols.py"));
     localize.addArg(b.getInstallPath(.lib, abi_lib.out_lib_filename));
     localize.addFileArg(b.path("../include/jumpnbump.h"));
     localize.step.dependOn(&install.step);
