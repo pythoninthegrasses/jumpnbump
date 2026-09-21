@@ -11,7 +11,7 @@ tasks:
       - uv run tools/build_sprite_atlas.py --all
 
   sprites:check:
-    desc: "Verify the committed sprite atlases match a fresh render byte-for-byte"
+    desc: "Verify the committed sprite atlases match a fresh render pixel-for-pixel"
     cmds:
       - uv run tools/build_sprite_atlas.py --all --check
 
@@ -21,7 +21,7 @@ tasks:
       - uv run tools/build_level_layers.py --all
 
   levels:check:
-    desc: "Verify the committed level layers match a fresh render byte-for-byte"
+    desc: "Verify the committed level layers match a fresh render pixel-for-pixel"
     cmds:
       - uv run tools/build_level_layers.py --all --check
 

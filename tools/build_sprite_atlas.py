@@ -173,16 +173,11 @@ def write_tres(name: str, placements: list[dict], out_dir: Path) -> Path:
 
 def render_one(
     asset_dump: Path, name: str, dump_root: Path
-) -> tuple[bytes, list[dict]]:
+) -> tuple[Image.Image, list[dict]]:
     dump_dir = dump_root / name
     manifest = dump_gob(asset_dump, name, dump_dir)
     palette = load_palette(dump_dir / manifest["palette_file"])
-    image, placements = build_atlas(manifest, dump_dir, palette)
-    import io
-
-    buf = io.BytesIO()
-    image.save(buf, format="PNG")
-    return buf.getvalue(), placements
+    return build_atlas(manifest, dump_dir, palette)
 
 
 def render_all(out_dir: Path) -> None:
@@ -190,8 +185,8 @@ def render_all(out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         for name in GOB_NAMES:
-            png_bytes, placements = render_one(asset_dump, name, Path(tmp))
-            (out_dir / f"{name}_atlas.png").write_bytes(png_bytes)
+            image, placements = render_one(asset_dump, name, Path(tmp))
+            image.save(out_dir / f"{name}_atlas.png", format="PNG")
             manifest_out = {
                 "sprite_index_formula": "colour * 18 + direction * 9 + frame (main.c: player[i].image + i*18, then + direction*9)",
                 "frames": placements,
@@ -206,18 +201,26 @@ def render_all(out_dir: Path) -> None:
 
 
 def check_all(committed_dir: Path) -> int:
+    # Compares decoded pixels, not encoded PNG bytes: Pillow's PNG encoder is
+    # not guaranteed to produce byte-identical output across versions or
+    # platforms even when the source pixels are unchanged (observed directly:
+    # the same Pillow version re-encoded identical pixels to a different
+    # compressed IDAT size). Pixel content is the actual invariant this check
+    # protects.
     asset_dump = build_asset_dump()
     failures = []
     with tempfile.TemporaryDirectory() as tmp:
         for name in GOB_NAMES:
-            png_bytes, _ = render_one(asset_dump, name, Path(tmp))
+            fresh_image, _ = render_one(asset_dump, name, Path(tmp))
             committed_path = committed_dir / f"{name}_atlas.png"
             if not committed_path.exists():
                 failures.append(
                     f"{committed_path} does not exist (run `tools/build_sprite_atlas.py --all` and commit it)"
                 )
                 continue
-            if png_bytes != committed_path.read_bytes():
+            committed_image = Image.open(committed_path)
+            committed_image.load()
+            if fresh_image.tobytes() != committed_image.convert("RGBA").tobytes():
                 failures.append(f"{committed_path} does not match a fresh render")
     if failures:
         print("build_sprite_atlas: check FAILED", file=sys.stderr)
@@ -225,7 +228,7 @@ def check_all(committed_dir: Path) -> int:
             print(f"  - {failure}", file=sys.stderr)
         return 1
     print(
-        f"build_sprite_atlas: {len(GOB_NAMES)} atlas(es) match a fresh render byte-for-byte"
+        f"build_sprite_atlas: {len(GOB_NAMES)} atlas(es) match a fresh render pixel-for-pixel"
     )
     return 0
 

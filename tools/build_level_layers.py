@@ -98,7 +98,7 @@ def load_palette(path: Path) -> list[tuple[int, int, int]]:
 
 def render_pair(
     asset_dump: Path, stem: str, bg_pcx: str, mask_pcx: str, dump_dir: Path
-) -> tuple[bytes, bytes]:
+) -> tuple[Image.Image, Image.Image]:
     dump_pcx(asset_dump, DATA_DIR / bg_pcx, dump_dir, "bg", with_palette=True)
     dump_pcx(asset_dump, DATA_DIR / mask_pcx, dump_dir, "mask", with_palette=False)
 
@@ -115,17 +115,9 @@ def render_pair(
         alpha = 255 if mask_idx[i] != 0 else 0
         foreground[off : off + 4] = bytes((r, g, b, alpha))
 
-    import io
-
-    bg_buf = io.BytesIO()
-    Image.frombytes("RGBA", (WIDTH, HEIGHT), bytes(background)).save(
-        bg_buf, format="PNG"
-    )
-    fg_buf = io.BytesIO()
-    Image.frombytes("RGBA", (WIDTH, HEIGHT), bytes(foreground)).save(
-        fg_buf, format="PNG"
-    )
-    return bg_buf.getvalue(), fg_buf.getvalue()
+    bg_image = Image.frombytes("RGBA", (WIDTH, HEIGHT), bytes(background))
+    fg_image = Image.frombytes("RGBA", (WIDTH, HEIGHT), bytes(foreground))
+    return bg_image, fg_image
 
 
 def render_all(out_dir: Path) -> None:
@@ -135,11 +127,11 @@ def render_all(out_dir: Path) -> None:
 
     with tempfile.TemporaryDirectory() as tmp:
         for stem, bg_pcx, mask_pcx in LAYER_SETS:
-            bg_bytes, fg_bytes = render_pair(
+            bg_image, fg_image = render_pair(
                 asset_dump, stem, bg_pcx, mask_pcx, Path(tmp) / stem
             )
-            (out_dir / f"{stem}_background.png").write_bytes(bg_bytes)
-            (out_dir / f"{stem}_foreground.png").write_bytes(fg_bytes)
+            bg_image.save(out_dir / f"{stem}_background.png", format="PNG")
+            fg_image.save(out_dir / f"{stem}_foreground.png", format="PNG")
             print(
                 f"build_level_layers: wrote {stem}_background.png and {stem}_foreground.png"
             )
@@ -159,18 +151,24 @@ def render_all(out_dir: Path) -> None:
 
 
 def check_all(committed_dir: Path) -> int:
+    # Compares decoded pixels, not encoded PNG bytes: Pillow's PNG encoder is
+    # not guaranteed to produce byte-identical output across versions or
+    # platforms even when the source pixels are unchanged (observed directly:
+    # the same Pillow version re-encoded identical pixels to a different
+    # compressed IDAT size). Pixel content is the actual invariant this check
+    # protects.
     asset_dump = build_asset_dump()
     failures = []
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
         for stem, bg_pcx, mask_pcx in LAYER_SETS:
-            bg_bytes, fg_bytes = render_pair(
+            bg_image, fg_image = render_pair(
                 asset_dump, stem, bg_pcx, mask_pcx, Path(tmp) / stem
             )
-            for suffix, fresh in (
-                (f"{stem}_background.png", bg_bytes),
-                (f"{stem}_foreground.png", fg_bytes),
+            for suffix, fresh_image in (
+                (f"{stem}_background.png", bg_image),
+                (f"{stem}_foreground.png", fg_image),
             ):
                 committed_path = committed_dir / suffix
                 if not committed_path.exists():
@@ -178,7 +176,9 @@ def check_all(committed_dir: Path) -> int:
                         f"{committed_path} does not exist (run `tools/build_level_layers.py --all` and commit it)"
                     )
                     continue
-                if fresh != committed_path.read_bytes():
+                committed_image = Image.open(committed_path)
+                committed_image.load()
+                if fresh_image.tobytes() != committed_image.convert("RGBA").tobytes():
                     failures.append(f"{committed_path} does not match a fresh render")
     if failures:
         print("build_level_layers: check FAILED", file=sys.stderr)
@@ -186,7 +186,7 @@ def check_all(committed_dir: Path) -> int:
             print(f"  - {failure}", file=sys.stderr)
         return 1
     print(
-        f"build_level_layers: {len(LAYER_SETS) * 2} layer(s) match a fresh render byte-for-byte"
+        f"build_level_layers: {len(LAYER_SETS) * 2} layer(s) match a fresh render pixel-for-pixel"
     )
     return 0
 
