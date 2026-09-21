@@ -29,4 +29,28 @@ final class PresentationGeometryTests: XCTestCase {
         XCTAssertEqual(g.destWidth, 400)
         XCTAssertEqual(g.destHeight, 256)
     }
+
+    func testAnisotropicFillScalesEachAxisIndependently() {
+        // QHD 2560x1440: floor(2560/400)=6, floor(1440/256)=5 -- uniform
+        // mode is bound by height (scale 5); anisotropic fill takes each
+        // axis's own largest integer scale instead.
+        let g = PresentationGeometry(
+            sourceWidth: 400, sourceHeight: 256, viewWidth: 2560, viewHeight: 1440, fillMode: .anisotropicFill
+        )
+        XCTAssertEqual(g.scaleX, 6)
+        XCTAssertEqual(g.scaleY, 5)
+        XCTAssertEqual(g.destWidth, 2400)
+        XCTAssertEqual(g.destHeight, 1280)
+        XCTAssertEqual(g.destX, (2560 - 2400) / 2)
+        XCTAssertEqual(g.destY, (1440 - 1280) / 2)
+    }
+
+    func testAnisotropicFillMatchesUniformWhenBothAxesAgree() {
+        let uniform = PresentationGeometry(sourceWidth: 400, sourceHeight: 256, viewWidth: 1800, viewHeight: 1100)
+        let anisotropic = PresentationGeometry(
+            sourceWidth: 400, sourceHeight: 256, viewWidth: 1800, viewHeight: 1100, fillMode: .anisotropicFill
+        )
+        XCTAssertEqual(anisotropic.destWidth, uniform.destWidth)
+        XCTAssertEqual(anisotropic.destHeight, uniform.destHeight)
+    }
 }

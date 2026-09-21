@@ -144,11 +144,16 @@ public final class JNBFireworksView: ScreenSaverView {
 
         guard let drawable = layer.nextDrawable() else { return }
 
+        // anisotropicFill trades square pixels for a smaller letterbox
+        // margin -- confirmed via `task screensaver:host` at QHD
+        // (2560x1440), where the reduced margin reads better than the
+        // ~20% pixel stretch costs.
         let geometry = PresentationGeometry(
             sourceWidth: Framebuffer.width,
             sourceHeight: Framebuffer.height,
             viewWidth: Int(bounds.width),
-            viewHeight: Int(bounds.height)
+            viewHeight: Int(bounds.height),
+            fillMode: .anisotropicFill
         )
         let clipRect = geometry.clipSpaceRect(viewWidth: Int(bounds.width), viewHeight: Int(bounds.height))
 
