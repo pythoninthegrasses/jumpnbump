@@ -14,6 +14,7 @@ This repo is mid-port to a `core/` (Zig simulation) + `include/` (frozen C ABI) 
 
 - `docs/porting-playbook.md` — the incremental C-to-Zig porting procedure: one subsystem at a time, ABI-compatible exports, the no-`@import`-between-ported-modules rule, and the four-tier verification ladder (unit/differential/ABI-conformance/Godot-replay), including Jump'n'Bump's no-float simulation constraints.
 - `docs/build-layout.md` — the full target directory layout and how `core/`, `include/`, `extension/`, `game/`, and `tools/` fit together with the legacy build.
+- `docs/development.md` — local dev workflow notes: `act`'s sharp edges (architecture mismatch, `--reuse` volume persistence, `.dockerignore` not applying) and known CI task-graph gaps.
 
 ## Build
 
