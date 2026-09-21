@@ -22,15 +22,24 @@ tasks:
     deps:
       - ":extension:build"
     cmds:
-      # --frame-delay 800: a coldstart --import with a GDExtension that
-      # registers classes (ours does) hits a confirmed Godot engine race
-      # (godotengine/godot#111048, #111645, fix pending in #123658):
-      # EditorHelp queues a deferred _gen_extensions_docs() callback that
-      # can still be in flight when Main::cleanup() tears down its target,
-      # crashing with SIGSEGV on a null `doc` pointer. The frame delay
-      # gives that callback time to flush before cleanup runs -- verified
-      # 10/10 clean runs locally vs. a ~30-50% crash rate without it.
-      - godot --headless --frame-delay 800 --path game --import
+      # --frame-delay 800 + a retry loop: a coldstart --import with a
+      # GDExtension that registers classes (ours does) hits a confirmed
+      # Godot engine race (godotengine/godot#111048, #111645, fix pending
+      # in #123658): EditorHelp queues a deferred _gen_extensions_docs()
+      # callback that can still be in flight when Main::cleanup() tears
+      # down its target, crashing with SIGSEGV (exit 134) on a null `doc`
+      # pointer. --frame-delay gives that callback time to flush before
+      # cleanup runs, cutting the crash rate a lot (10/10 clean locally
+      # vs. ~30-50% without it) but it's a timing mitigation, not a fix --
+      # upstream's own PR notes call it a workaround, and it still crashed
+      # once on the real macOS CI runner even with the flag. Retrying is
+      # the only fully reliable option short of shipping a patched Godot.
+      - |
+        for i in 1 2 3; do
+          godot --headless --frame-delay 800 --path game --import && exit 0
+          echo "game:import attempt $i/3 crashed (see godotengine/godot#111048); retrying..." >&2
+        done
+        exit 1
 
   bootstrap:
     desc: "Install gdUnit4, the Tier-D test framework (checksum-verified download, TASK-014.07)"
@@ -51,9 +60,12 @@ tasks:
       not a wrapper-imposed one). Also runs the pre-gdUnit4 standalone
       smoke scripts (test_tick_driver.gd and friends, TASK-014.02-.06) via
       `godot --headless --script`, since those predate gdUnit4 and still
-      carry real coverage.
+      carry real coverage. Depends on bootstrap too: CI never ran it on
+      its own, so gdUnit4's own GdUnitCmdTool.gd was never present for
+      the final cmd below to load.
     deps:
       - import
+      - bootstrap
     cmds:
       - godot --headless --path game --script res://tests/test_tick_driver.gd
       - godot --headless --path game --script res://tests/test_sprite_geometry.gd
