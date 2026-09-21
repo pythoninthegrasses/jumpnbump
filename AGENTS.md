@@ -10,6 +10,10 @@ Jump'n'Bump — a 1998 DOS game by Brainchild Design, ported to Linux/SDL. Origi
 
 This repo is mid-port to a `core/` (Zig simulation) + `include/` (frozen C ABI) + `extension/` (GDExtension shim) + `game/` (Godot project) + `tools/` (asset pipeline) layout — see `backlog/tasks/` for the full plan. The legacy `main.c`, `sdl/`, and `modify/` tree is retained forever, not deleted once the new tree lands: it's the differential-test oracle the new Zig simulation core is checked against frame-by-frame (`TASK-008`), so any behavioral drift in the port shows up as a failing diff rather than a silent regression.
 
+## Backlog task references
+
+NEVER reference a backlog task ID (`TASK-NNN`/`TASK-NNN.NN`) in code, comments, or docstrings unless explicitly directed to — they rot as the codebase evolves and belong in the commit/PR description instead. They may appear in `docs/*.md` as provenance for a design decision (e.g. "see TASK-012.02"), since those docs already point back to `backlog/tasks/` for the full rationale.
+
 ## Docs
 
 - `docs/porting-playbook.md` — the incremental C-to-Zig porting procedure: one subsystem at a time, ABI-compatible exports, the no-`@import`-between-ported-modules rule, and the four-tier verification ladder (unit/differential/ABI-conformance/Godot-replay), including Jump'n'Bump's no-float simulation constraints.
