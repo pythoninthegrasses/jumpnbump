@@ -62,6 +62,7 @@ const flies_mod = @import("flies.zig");
 const dat = @import("dat.zig");
 const asset_runtime = @import("asset_runtime.zig");
 const mod_player = @import("mod_player.zig");
+const fireworks = @import("fireworks.zig");
 
 const max_players = world.max_players;
 const num_objects = world.num_objects;
@@ -125,7 +126,7 @@ pub const JNB_ERR_LEVEL_PARSE_FAILED: Result = 4;
 pub const JNB_ERR_ASSET_NOT_FOUND: Result = 5;
 pub const JNB_ERR_ASSET_DECODE_FAILED: Result = 6;
 
-const JNB_ABI_VERSION: u16 = 3;
+const JNB_ABI_VERSION: u16 = 4;
 
 const JNB_EVENT_SFX: u8 = 1;
 const JNB_EVENT_OBJECT_SPAWN: u8 = 2;
@@ -230,6 +231,24 @@ comptime {
     std.debug.assert(@sizeOf(Event) == 20);
 }
 
+pub const FireworksConfig = extern struct {
+    abi_version: u16,
+    _pad0: u16,
+    rng_seed: u32,
+};
+comptime {
+    std.debug.assert(@sizeOf(FireworksConfig) == 8);
+}
+
+pub const StarView = extern struct {
+    x: i32,
+    y: i32,
+    col: i32,
+};
+comptime {
+    std.debug.assert(@sizeOf(StarView) == 12);
+}
+
 // --- Per-instance bookkeeping (the real payload of jnb_world_size()) ------
 //
 // docs/checksum-format.md's frame_num has no production tracker anywhere in
@@ -262,6 +281,19 @@ const Instance = struct {
     event_len: usize = 0,
 };
 
+/// TASK-017.03's fireworks singleton — see ../include/jumpnbump.h's file
+/// header comment for why this is a second, jnb_world-sized-and-shaped but
+/// independent, per-process singleton rather than a jnb_world extension.
+/// No `state`/`frame_num`: core/fireworks.zig's step() takes no input and
+/// core/world.zig's checksum/dump format is jnb_world-specific, neither of
+/// which fireworks mode uses.
+const FireworksInstance = struct {
+    pump_state: game_loop.PumpState = .{},
+    events: [EVENT_QUEUE_CAP]Event = undefined,
+    event_head: usize = 0,
+    event_len: usize = 0,
+};
+
 fn storageOf(ptr: *anyopaque) *Instance {
     return @ptrCast(@alignCast(ptr));
 }
@@ -270,11 +302,21 @@ fn storageOfConst(ptr: *const anyopaque) *const Instance {
     return @ptrCast(@alignCast(ptr));
 }
 
+fn fireworksStorageOf(ptr: *anyopaque) *FireworksInstance {
+    return @ptrCast(@alignCast(ptr));
+}
+
+fn fireworksStorageOfConst(ptr: *const anyopaque) *const FireworksInstance {
+    return @ptrCast(@alignCast(ptr));
+}
+
 /// Queues one event, dropping the oldest queued event to make room on
 /// overflow — an undrained caller loses only history, never live world
 /// state (still queryable via jnb_player_view_get/jnb_objects_copy
-/// regardless). Mirrors neo_snake's core/abi.zig pushEvent.
-fn pushEvent(inst: *Instance, e: Event) void {
+/// regardless). Mirrors neo_snake's core/abi.zig pushEvent. Generic over
+/// `*Instance`/`*FireworksInstance` (identical event_head/event_len/events
+/// shape) rather than duplicated for the second singleton.
+fn pushEvent(inst: anytype, e: Event) void {
     if (inst.event_len == EVENT_QUEUE_CAP) {
         inst.event_head = (inst.event_head + 1) % EVENT_QUEUE_CAP;
         inst.event_len -= 1;
@@ -403,29 +445,20 @@ export fn jnb_step(world_ptr: ?*anyopaque, inputs: Input) callconv(.c) Result {
     return JNB_OK;
 }
 
-/// Reimplements core/game_loop.zig's pump() accumulator here (rather than
-/// calling it) so each individual tick's Events can be captured — pump()
+/// Drives core/game_loop.zig's ticksFor() accumulator directly (rather than
+/// calling pump()) so each individual tick's Events can be captured — pump()
 /// itself discards step()'s return value, same reasoning neo_snake's own
-/// ns_pump gives for not delegating to core/world.zig's pump(). The
-/// constants mirror game_loop.zig's private ticks_per_1000ms/
-/// accum_unit_scale/accum_per_tick exactly (60Hz, scaled by 3 so one tick is
-/// exactly 50 accumulator units — frozen alongside game_loop.zig's own).
-const accum_per_tick: u32 = 50;
-const accum_unit_scale: u32 = 3;
-
+/// ns_pump gives for not delegating to core/world.zig's pump(). Shared with
+/// jnb_fireworks_pump below, which drives the same 60Hz clock over
+/// core/fireworks.zig's step() instead.
 export fn jnb_pump(world_ptr: ?*anyopaque, delta_ms: u32, inputs: Input, out_ticks: ?*u32) callconv(.c) Result {
     const inst = storageOf(world_ptr orelse return JNB_ERR_INVALID_ARGUMENT);
     const out = out_ticks orelse return JNB_ERR_INVALID_ARGUMENT;
     const conv_inputs = toInputs(inputs);
 
-    inst.pump_state.accum_units += delta_ms *% accum_unit_scale;
-    var ticks: u32 = 0;
-    while (inst.pump_state.accum_units >= accum_per_tick) {
-        inst.pump_state.accum_units -= accum_per_tick;
-        stepOneTick(inst, conv_inputs);
-        ticks += 1;
-    }
-    out.* = ticks;
+    const ticks = game_loop.ticksFor(&inst.pump_state, delta_ms);
+    for (0..ticks) |_| stepOneTick(inst, conv_inputs);
+    out.* = @intCast(ticks);
     return JNB_OK;
 }
 
@@ -702,5 +735,154 @@ export fn jnb_mod_render(
     const out = out_pcm_i16.?;
     @memcpy(out[0..pcm.len], pcm);
     required.* = pcm.len / 2;
+    return JNB_OK;
+}
+
+// --- Fireworks screensaver mode (TASK-017.03) -------------------------------
+//
+// core/fireworks.zig's rabbits[]/stars[] are its own `export var` globals
+// (not caller storage), so FireworksInstance above holds only the same
+// per-instance bookkeeping Instance does minus frame_num/state — see
+// ../include/jumpnbump.h's file header comment for the shared-singleton
+// divergence this and jnb_world both have, and why the two are mutually
+// exclusive within one process.
+
+export fn jnb_fireworks_size() callconv(.c) usize {
+    return @sizeOf(FireworksInstance);
+}
+
+export fn jnb_fireworks_align() callconv(.c) usize {
+    return @alignOf(FireworksInstance);
+}
+
+export fn jnb_fireworks_init(fireworks_ptr: ?*anyopaque, config: ?*const FireworksConfig) callconv(.c) Result {
+    const cfg = config orelse return JNB_ERR_INVALID_ARGUMENT;
+    const fp = fireworks_ptr orelse return JNB_ERR_INVALID_ARGUMENT;
+    if (cfg.abi_version != JNB_ABI_VERSION) return JNB_ERR_ABI_VERSION_MISMATCH;
+    if (cfg.rng_seed == 0) return JNB_ERR_INVALID_ARGUMENT;
+
+    const inst = fireworksStorageOf(fp);
+    inst.* = .{};
+
+    // fireworks.c:64's memset(ban_map, 0, ...), the shared particle pool
+    // reset, and reloading the animation table rabbitImage() reads --
+    // exactly core/fireworks_difftest.zig's setupWorld(), the already
+    // Tier-B-proven init sequence for this module.
+    objects_raw = [_]world.Object{.{}} ** num_objects;
+    ban_map_raw = std.mem.zeroes([ban_rows][ban_cols]u32);
+    steer.loadDefaultAnims();
+
+    // rabbits[]/stars[] are export var globals, not part of
+    // FireworksInstance -- a fresh init must zero them itself (matching
+    // core/fireworks_difftest.zig's own re-init between scenarios) since a
+    // prior run may have left live rabbits/stars behind.
+    fireworks.rabbits = std.mem.zeroes([fireworks.num_rabbits]fireworks.Rabbit);
+    fireworks.stars = std.mem.zeroes([fireworks.num_stars]fireworks.Star);
+    rnd_mod.seed(cfg.rng_seed);
+    fireworks.init();
+    fireworks.drawResetZ();
+    fireworks.sfxResetZ();
+    objects_mod.drawResetZ();
+
+    return JNB_OK;
+}
+
+/// Runs one fireworks tick and queues the events it produced: the
+/// detonation sfx cue (if any), then every rabbit sprite draw
+/// (core/fireworks.zig's own draw_trace_z, `a = 2`), then every gore
+/// object draw update_objects() produced this tick (core/objects.zig's
+/// draw_trace_z, `a = d.kind`) -- fireworks.step()'s own call order
+/// (advanceStars -> maybeSpawnRabbit -> updateRabbits -> update_objects).
+fn fireworksStepOneTick(inst: *FireworksInstance) void {
+    fireworks.step();
+
+    for (0..fireworks.sfxCountZ()) |i| {
+        const packed_val = fireworks.sfx_trace_z[i];
+        pushEvent(inst, .{
+            .kind = JNB_EVENT_SFX,
+            ._pad = .{ 0, 0, 0 },
+            .a = @divTrunc(packed_val, 100000),
+            .b = @rem(packed_val, 100000),
+            .c = 0,
+            .d = 0,
+        });
+    }
+    fireworks.sfxResetZ();
+
+    for (0..fireworks.drawCountZ()) |i| {
+        const d = fireworks.draw_trace_z[i];
+        pushEvent(inst, .{
+            .kind = JNB_EVENT_DRAW,
+            ._pad = .{ 0, 0, 0 },
+            .a = 2,
+            .b = d.x,
+            .c = d.y,
+            .d = d.image,
+        });
+    }
+    fireworks.drawResetZ();
+
+    for (0..objects_mod.drawCountZ()) |i| {
+        const d = objects_mod.draw_trace_z[i];
+        pushEvent(inst, .{
+            .kind = JNB_EVENT_DRAW,
+            ._pad = .{ 0, 0, 0 },
+            .a = d.kind,
+            .b = d.a,
+            .c = d.b,
+            .d = d.image,
+        });
+    }
+    objects_mod.drawResetZ();
+}
+
+export fn jnb_fireworks_step(fireworks_ptr: ?*anyopaque) callconv(.c) Result {
+    const inst = fireworksStorageOf(fireworks_ptr orelse return JNB_ERR_INVALID_ARGUMENT);
+    fireworksStepOneTick(inst);
+    return JNB_OK;
+}
+
+export fn jnb_fireworks_pump(fireworks_ptr: ?*anyopaque, delta_ms: u32, out_ticks: ?*u32) callconv(.c) Result {
+    const inst = fireworksStorageOf(fireworks_ptr orelse return JNB_ERR_INVALID_ARGUMENT);
+    const out = out_ticks orelse return JNB_ERR_INVALID_ARGUMENT;
+
+    const ticks = game_loop.ticksFor(&inst.pump_state, delta_ms);
+    for (0..ticks) |_| fireworksStepOneTick(inst);
+    out.* = @intCast(ticks);
+    return JNB_OK;
+}
+
+export fn jnb_fireworks_stars_copy(fireworks_ptr: ?*const anyopaque, out_stars: ?[*]StarView, out_capacity: usize, out_required: ?*usize) callconv(.c) Result {
+    _ = fireworks_ptr orelse return JNB_ERR_INVALID_ARGUMENT;
+    const required = out_required orelse return JNB_ERR_INVALID_ARGUMENT;
+    required.* = fireworks.num_stars;
+    if (out_stars == null or out_capacity == 0) return JNB_OK;
+    if (out_capacity < fireworks.num_stars) return JNB_ERR_BUFFER_TOO_SMALL;
+
+    for (0..fireworks.num_stars) |i| {
+        const s = &fireworks.stars[i];
+        out_stars.?[i] = .{ .x = s.x, .y = s.y, .col = s.col };
+    }
+    return JNB_OK;
+}
+
+export fn jnb_fireworks_event_count(fireworks_ptr: ?*const anyopaque) callconv(.c) usize {
+    const fp = fireworks_ptr orelse return 0;
+    return fireworksStorageOfConst(fp).event_len;
+}
+
+export fn jnb_fireworks_event_drain(fireworks_ptr: ?*anyopaque, out_events: ?[*]Event, out_capacity: usize, out_count: ?*usize) callconv(.c) Result {
+    const inst = fireworksStorageOf(fireworks_ptr orelse return JNB_ERR_INVALID_ARGUMENT);
+    const count = out_count orelse return JNB_ERR_INVALID_ARGUMENT;
+    const n = @min(inst.event_len, out_capacity);
+    if (out_events) |dst| {
+        for (0..n) |i| {
+            const idx = (inst.event_head + i) % EVENT_QUEUE_CAP;
+            dst[i] = inst.events[idx];
+        }
+    }
+    inst.event_head = (inst.event_head + n) % EVENT_QUEUE_CAP;
+    inst.event_len -= n;
+    count.* = n;
     return JNB_OK;
 }

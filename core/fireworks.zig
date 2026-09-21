@@ -32,8 +32,9 @@
 // `SFX_DEATH_FREQ + rnd(2000) - 1000` (core/collision.zig:246). Core carries
 // no renderer or audio implementation (TASK-011.08), so both become
 // plain-data trace records — the same shape core/objects.zig:106-122's
-// draw_trace_z established. Nothing drains these yet: TASK-017.03 wires the
-// ABI/event-stream surface (backlog/decisions/decision-001).
+// draw_trace_z established. core/abi.zig's jnb_fireworks_step drains these
+// (TASK-017.03, backlog/decisions/decision-001) into the same jnb_event
+// ring jnb_step's own draw/sfx traces already use.
 //
 // Arithmetic: every fixed-point operation routes through core/fixed16.zig's
 // wrapping helpers, matching every other ported module.

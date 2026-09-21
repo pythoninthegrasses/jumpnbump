@@ -26,6 +26,7 @@ includes:
   game: taskfiles/game.yml
   legacy: taskfiles/legacy.yml
   release: taskfiles/release.yml
+  screensaver: taskfiles/screensaver.yml
 
 tasks:
   default:

@@ -264,19 +264,30 @@ pub const PumpState = struct {
     accum_units: u32 = 0,
 };
 
+/// How many whole 60Hz ticks `delta_ms` is worth, advancing
+/// `pump_state.accum_units` by exactly that much (the fractional remainder
+/// carries to the next call). Pure accumulator arithmetic, no stepping —
+/// shared by pump() below and core/abi.zig's jnb_fireworks_pump, which
+/// drives core/fireworks.zig's step() on the same 60Hz clock instead of
+/// this module's step().
+pub fn ticksFor(pump_state: *PumpState, delta_ms: u32) usize {
+    pump_state.accum_units += delta_ms *% accum_unit_scale;
+    var ticks: usize = 0;
+    while (pump_state.accum_units >= accum_per_tick) {
+        pump_state.accum_units -= accum_per_tick;
+        ticks += 1;
+    }
+    return ticks;
+}
+
 /// Run every whole tick `delta_ms` is worth (state.accum_units carries the
 /// fractional remainder to the next call), returning how many ticks ran.
 /// Ticks are run back to back with the same `inputs` for the whole delta —
 /// callers wanting per-tick-varying input (e.g. a human's held keys
 /// changing mid-delta) should call step() directly instead.
 pub fn pump(pump_state: *PumpState, state: *State, delta_ms: u32, inputs: Inputs) usize {
-    pump_state.accum_units += delta_ms *% accum_unit_scale;
-    var ticks: usize = 0;
-    while (pump_state.accum_units >= accum_per_tick) {
-        pump_state.accum_units -= accum_per_tick;
-        _ = step(state, inputs);
-        ticks += 1;
-    }
+    const ticks = ticksFor(pump_state, delta_ms);
+    for (0..ticks) |_| _ = step(state, inputs);
     return ticks;
 }
 
@@ -285,7 +296,7 @@ test "accum_per_tick divides 1000ms*scale by 60 exactly" {
     try std.testing.expectEqual(@as(u32, 0), (1000 * accum_unit_scale) % ticks_per_1000ms);
 }
 
-test "pump derives 60 ticks from a 1000ms delta with zero drift" {
+test "ticksFor derives 60 ticks from a 1000ms delta with zero drift" {
     var pump_state: PumpState = .{};
     var total: usize = 0;
     // Feeding the delta in small, uneven chunks (not just one 1000ms call)
@@ -294,11 +305,7 @@ test "pump derives 60 ticks from a 1000ms delta with zero drift" {
     // float delta or a bare `ms / (1000/60)` division would have.
     var i: usize = 0;
     while (i < 100) : (i += 1) {
-        pump_state.accum_units += 10 *% accum_unit_scale;
-        while (pump_state.accum_units >= accum_per_tick) {
-            pump_state.accum_units -= accum_per_tick;
-            total += 1;
-        }
+        total += ticksFor(&pump_state, 10);
     }
     try std.testing.expectEqual(@as(usize, 60), total);
 }

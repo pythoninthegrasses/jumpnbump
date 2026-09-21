@@ -1,0 +1,9 @@
+// Wraps ../../../include/jumpnbump.h -- the same frozen ABI header
+// extension/'s GDExtension shim consumes (TASK-012.01) -- directly, with no
+// shim header of its own: this target adds nothing to the C surface, it
+// only makes the existing one importable as `import CJumpnbump`.
+module CJumpnbump [system] {
+    header "../../../include/jumpnbump.h"
+    link "jumpnbump"
+    export *
+}
