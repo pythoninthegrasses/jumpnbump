@@ -23,6 +23,20 @@ if ccache:
     env["CC"] = "{} {}".format(ccache, env["CC"])
     env["CXX"] = "{} {}".format(ccache, env["CXX"])
 
+# godot-cpp's own libgodot-cpp static lib has ~1000 object files; linking
+# it assembles one long `ar rcs lib.a obj1.o obj2.o ...` string, which on
+# Linux can exceed the kernel's MAX_ARG_STRLEN (128KiB, a per-argument
+# cap on the whole `sh -c "..."` string -- independent of `ulimit -s`,
+# which only bounds total argv+envp) and fail with "Argument list too
+# long". godot-cpp's own tools/web.py already routes ARCOM through a
+# response file for exactly this reason; this does the same for linux,
+# which isn't covered there by default.
+if env["platform"] == "linux":
+    from SCons.Platform import TempFileMunge
+
+    env["TEMPFILE"] = TempFileMunge
+    env["ARCOM"] = "${TEMPFILE('%s')}" % env["ARCOM"]
+
 env.Append(CPPPATH=["src/", "../include"])
 sources = Glob("src/*.cpp")
 
