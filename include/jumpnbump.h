@@ -41,6 +41,16 @@
  * are not. A second concurrent jnb_world would silently share the same
  * player[]/objects[]/ban_map[] as the first; nothing here is safe to call
  * from more than one such handle at a time.
+ *
+ * TASK-017.03's jnb_fireworks_... group (core/fireworks.zig) has the exact
+ * same divergence, for the exact same reason: rabbits[]/stars[] are
+ * module-owned `export var` globals, so **at most one jnb_fireworks_...
+ * instance exists per process either.** It additionally shares
+ * core/objects.zig's objects_raw[] particle pool and the one rnd() stream
+ * with jnb_world -- the two groups are mutually exclusive within a
+ * process, not just each individually singleton. A caller (the fireworks
+ * screensaver) that hosts multiple views in one process must pump one
+ * shared jnb_fireworks instance, not one per view.
  */
 
 #ifndef JUMPNBUMP_H
@@ -72,8 +82,11 @@ extern "C" {
  * jnb_world_... simulation surface. jnb_config's own layout is unchanged.
  * 3: added jnb_mod_count_frames / jnb_mod_render (TASK-016.03, runtime
  * .mod playback for custom-level music). No existing struct or function
- * changed. */
-#define JNB_ABI_VERSION 3u
+ * changed.
+ * 4: added the jnb_fireworks_... surface (TASK-017.03, the fireworks
+ * screensaver mode). No existing struct or function changed; jnb_event's
+ * JNB_EVENT_DRAW gained a third documented `a` value (see its enum). */
+#define JNB_ABI_VERSION 4u
 
 /* core/world.zig's fixed simulation dimensions (JNB_MAX_PLAYERS,
  * NUM_OBJECTS, and the ban_map's 17x22 grid — 17 rows because
@@ -91,6 +104,9 @@ extern "C" {
 #define JNB_ASSET_SCREEN_H 256u
 #define JNB_ASSET_RGBA_LEN (JNB_ASSET_SCREEN_W * JNB_ASSET_SCREEN_H * 4u)
 #define JNB_ASSET_PALETTE_SIZE 768u
+
+/* core/fireworks.zig's fixed star-field size (fireworks.c's stars[300]). */
+#define JNB_FIREWORKS_NUM_STARS 300u
 
 /* ---------------------------------------------------------------------- */
 /* Result codes                                                           */
@@ -142,6 +158,13 @@ enum {
     JNB_EVENT_OBJECT_SPAWN = 2,
     JNB_EVENT_PLAYER_DEATH = 3,
     JNB_EVENT_SCORE_CHANGE = 4,
+    /* b/c/d = x, y, image (already-pixel x/y, gob frame index). `a`
+     * distinguishes which atlas/call produced it: 0 = add_pob against
+     * objects_atlas (core/game_loop.zig's step()'s own draws, and any
+     * jnb_fireworks_step gore drawn via the shared particle pool), 1 =
+     * add_leftovers' second call (also objects_atlas), 2 = a rabbit sprite
+     * (rabbit_atlas) -- jnb_fireworks_step only, never produced by
+     * jnb_step. */
     JNB_EVENT_DRAW = 5,
     JNB_EVENT_SFX_VOLUME = 6,
 };
@@ -523,6 +546,93 @@ jnb_result jnb_mod_render(
     size_t pcm_capacity,
     size_t *out_frame_count
 );
+
+/* ---------------------------------------------------------------------- */
+/* Fireworks screensaver mode (TASK-017.03)                                */
+/*                                                                         */
+/* core/fireworks.zig ports fireworks.c's screensaver mode: 20 bouncing/   */
+/* exploding rocket-rabbits over a 300-star scrolling parallax field,      */
+/* entirely separate from jnb_world/jnb_step's player[] simulation (see    */
+/* the file header comment for why this is its own singleton, sharing     */
+/* only the particle pool and RNG stream with jnb_world). A caller never   */
+/* touches rabbits[] directly: live rabbit sprites and their detonation    */
+/* gore both arrive as ordered JNB_EVENT_DRAW/JNB_EVENT_SFX events (see    */
+/* jnb_event_kind's JNB_EVENT_DRAW doc for the atlas-selecting `a` value), */
+/* the same drain contract jnb_event_drain already established. Only the   */
+/* star field, which is state rather than a discrete per-tick event, is    */
+/* queried directly via jnb_fireworks_stars_copy.                          */
+/* ---------------------------------------------------------------------- */
+
+typedef struct jnb_fireworks_config {
+    uint16_t abi_version; /* must equal JNB_ABI_VERSION */
+    uint16_t _pad0;        /* specified-zero; pads rng_seed to a 4-byte offset */
+    uint32_t rng_seed;     /* core/rnd.zig's seed(); must be nonzero */
+} jnb_fireworks_config;
+JNB_STATIC_ASSERT(sizeof(jnb_fireworks_config) == 8, "jnb_fireworks_config layout changed");
+
+/* One star (core/fireworks.zig's Star, minus the presentation-only
+ * old_x/old_y/back[2] fields already dropped at the port, TASK-017.02):
+ * raw 16.16 fixed-point x/y (matching jnb_player_view/jnb_object_view's own
+ * convention -- shift right 16 to get pixels; NOT the already-pixel
+ * convention jnb_event's JNB_EVENT_DRAW uses) and `col`, a level.pcx
+ * palette index in [24, 30] (brighter = both lighter grey and faster
+ * parallax scroll -- see core/fireworks.zig's advanceStars()). */
+typedef struct jnb_star_view {
+    int32_t x;
+    int32_t y;
+    int32_t col;
+} jnb_star_view;
+JNB_STATIC_ASSERT(sizeof(jnb_star_view) == 12, "jnb_star_view layout changed");
+
+/* Bytes the caller must allocate for one fireworks instance. Fixed, like
+ * jnb_world_size -- core/fireworks.zig's dimensions (JNB_FIREWORKS_NUM_STARS,
+ * 20 rabbits) are compile-time constants. */
+size_t jnb_fireworks_size(void);
+
+/* Required alignment for the storage passed to jnb_fireworks_init. */
+size_t jnb_fireworks_align(void);
+
+/* Initializes caller-supplied storage (jnb_fireworks_size() bytes, aligned
+ * to jnb_fireworks_align()) as a fresh fireworks run: seeds the RNG stream
+ * from config->rng_seed, zeroes the shared particle pool and ban_map
+ * (fireworks.c:64's memset -- the star field draws no collision geometry,
+ * but the particle pool is shared with jnb_world's, so this call also
+ * invalidates any live jnb_world session in the same process), loads the
+ * default player animation table (core/fireworks.zig's rabbit sprites
+ * reuse it), then spawns rabbit 0 and all 300 stars
+ * (core/fireworks.zig's init(), fireworks.c:79-108 -- draws from the same
+ * rnd() stream this call just seeded, in that order).
+ *
+ * Returns JNB_ERR_ABI_VERSION_MISMATCH if config->abi_version !=
+ * JNB_ABI_VERSION, JNB_ERR_INVALID_ARGUMENT if config->rng_seed == 0. */
+jnb_result jnb_fireworks_init(void *fireworks, const jnb_fireworks_config *config);
+
+/* Advances exactly one fireworks tick (core/fireworks.zig's step()).
+ * Rabbit draws and detonation gore/sfx this tick produced are queued as
+ * jnb_event; drain them with jnb_fireworks_event_drain. */
+jnb_result jnb_fireworks_step(void *fireworks);
+
+/* Fixed-timestep convenience, identical in spirit to jnb_pump: advances
+ * every whole 60Hz tick delta_ms is worth (core/game_loop.zig's ticksFor,
+ * the same accumulator jnb_pump uses). *out_ticks receives how many ticks
+ * actually ran. Takes no input -- fireworks mode is non-interactive. */
+jnb_result jnb_fireworks_pump(void *fireworks, uint32_t delta_ms, uint32_t *out_ticks);
+
+/* Two-call length-then-fill contract identical to jnb_objects_copy: pass
+ * out_stars == NULL (or out_capacity == 0) to just learn *out_required
+ * (always JNB_FIREWORKS_NUM_STARS); otherwise fills up to out_capacity
+ * entries and sets *out_required, returning JNB_ERR_BUFFER_TOO_SMALL if
+ * out_capacity is smaller than required. */
+jnb_result jnb_fireworks_stars_copy(const void *fireworks, jnb_star_view *out_stars, size_t out_capacity, size_t *out_required);
+
+/* Number of events currently queued for this fireworks instance (mirrors
+ * jnb_event_count). */
+size_t jnb_fireworks_event_count(const void *fireworks);
+
+/* Drains up to out_capacity queued events, in tick-produced order, into
+ * out_events (mirrors jnb_event_drain -- nothing is dropped by a
+ * too-small buffer). */
+jnb_result jnb_fireworks_event_drain(void *fireworks, jnb_event *out_events, size_t out_capacity, size_t *out_count);
 
 #ifdef __cplusplus
 } /* extern "C" */

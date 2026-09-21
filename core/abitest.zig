@@ -34,6 +34,29 @@ const StorageBuf = struct {
     }
 };
 
+/// jnb_fireworks_*'s own storage, TASK-017.03 — a separate small buffer
+/// since jnb_fireworks_size() is unrelated to (and much smaller than)
+/// jnb_world_size().
+const FireworksStorageBuf = struct {
+    bytes: [16384]u8 align(64) = undefined,
+
+    fn ptr(self: *FireworksStorageBuf) *anyopaque {
+        return @ptrCast(&self.bytes);
+    }
+};
+
+fn makeFireworksConfig(seed: u32) c.jnb_fireworks_config {
+    return .{ .abi_version = c.JNB_ABI_VERSION, ._pad0 = 0, .rng_seed = seed };
+}
+
+fn fireworksInitOk(storage: *FireworksStorageBuf, config: *const c.jnb_fireworks_config) !void {
+    try std.testing.expect(c.jnb_fireworks_size() <= storage.bytes.len);
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_OK),
+        c.jnb_fireworks_init(storage.ptr(), config),
+    );
+}
+
 /// core/levelmap.zig's own `sample_16_rows` test fixture, duplicated here
 /// (not `@import`ed — the purity rule only allows `"std"`) as raw
 /// levelmap.txt-format text: 16 rows of 22 '0'-'4' digits, matching
@@ -262,6 +285,8 @@ test "@sizeOf on the ABI-crossing structs matches include/jumpnbump.h's static_a
     try std.testing.expectEqual(@as(usize, 40), @sizeOf(c.jnb_player_view));
     try std.testing.expectEqual(@as(usize, 36), @sizeOf(c.jnb_object_view));
     try std.testing.expectEqual(@as(usize, 20), @sizeOf(c.jnb_event));
+    try std.testing.expectEqual(@as(usize, 8), @sizeOf(c.jnb_fireworks_config));
+    try std.testing.expectEqual(@as(usize, 12), @sizeOf(c.jnb_star_view));
 }
 
 test "jnb_step advances frame_num-driven state deterministically and jnb_checksum matches jnb_world_dump" {
@@ -889,4 +914,150 @@ test "jnb_mod_count_frames and jnb_mod_render report JNB_ERR_ASSET_DECODE_FAILED
         @as(c.jnb_result, c.JNB_ERR_ASSET_DECODE_FAILED),
         c.jnb_mod_render(&garbage, garbage.len, 44100, null, 0, &required),
     );
+}
+
+// --- Fireworks screensaver mode (TASK-017.03) -------------------------------
+
+test "jnb_fireworks_init rejects a mismatched abi_version and a zero rng_seed, accepts the real config" {
+    var storage: FireworksStorageBuf = .{};
+    var config = makeFireworksConfig(1);
+
+    config.abi_version = c.JNB_ABI_VERSION + 1;
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_ERR_ABI_VERSION_MISMATCH),
+        c.jnb_fireworks_init(storage.ptr(), &config),
+    );
+    config.abi_version = c.JNB_ABI_VERSION;
+
+    const bad_seed = blk: {
+        var cfg = config;
+        cfg.rng_seed = 0;
+        break :blk cfg;
+    };
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_ERR_INVALID_ARGUMENT),
+        c.jnb_fireworks_init(storage.ptr(), &bad_seed),
+    );
+
+    try fireworksInitOk(&storage, &config);
+}
+
+test "jnb_fireworks_stars_copy two-call length-then-fill contract" {
+    var storage: FireworksStorageBuf = .{};
+    const config = makeFireworksConfig(1);
+    try fireworksInitOk(&storage, &config);
+
+    var required: usize = 0;
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_OK),
+        c.jnb_fireworks_stars_copy(storage.ptr(), null, 0, &required),
+    );
+    try std.testing.expectEqual(@as(usize, c.JNB_FIREWORKS_NUM_STARS), required);
+
+    var too_small: [10]c.jnb_star_view = undefined;
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_ERR_BUFFER_TOO_SMALL),
+        c.jnb_fireworks_stars_copy(storage.ptr(), &too_small, too_small.len, &required),
+    );
+    try std.testing.expectEqual(@as(usize, c.JNB_FIREWORKS_NUM_STARS), required);
+
+    var stars: [c.JNB_FIREWORKS_NUM_STARS]c.jnb_star_view = undefined;
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_OK),
+        c.jnb_fireworks_stars_copy(storage.ptr(), &stars, stars.len, &required),
+    );
+    try std.testing.expectEqual(@as(usize, c.JNB_FIREWORKS_NUM_STARS), required);
+    // fireworks.c's `col = 30 - rnd(7)`, always in [24, 30] -- every star's
+    // col lands there right after init(), before any tick has run.
+    for (stars) |s| {
+        try std.testing.expect(s.col >= 24 and s.col <= 30);
+    }
+}
+
+test "jnb_fireworks_step/jnb_fireworks_pump are deterministic and jnb_fireworks_pump derives 60 ticks from 1000ms" {
+    var storage: FireworksStorageBuf = .{};
+    const config = makeFireworksConfig(0xC0FFEE);
+    try fireworksInitOk(&storage, &config);
+
+    var out_ticks: u32 = 0;
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_OK),
+        c.jnb_fireworks_pump(storage.ptr(), 1000, &out_ticks),
+    );
+    try std.testing.expectEqual(@as(u32, 60), out_ticks);
+
+    // jnb_fireworks_pump must match jnb_fireworks_step called once per
+    // tick, tick-for-tick, on an identical fresh instance (same seed).
+    var storage2: FireworksStorageBuf = .{};
+    try fireworksInitOk(&storage2, &config);
+    for (0..60) |_| {
+        try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_fireworks_step(storage2.ptr()));
+    }
+
+    var stars1: [c.JNB_FIREWORKS_NUM_STARS]c.jnb_star_view = undefined;
+    var stars2: [c.JNB_FIREWORKS_NUM_STARS]c.jnb_star_view = undefined;
+    var required: usize = 0;
+    try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_fireworks_stars_copy(storage.ptr(), &stars1, stars1.len, &required));
+    try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_fireworks_stars_copy(storage2.ptr(), &stars2, stars2.len, &required));
+    try std.testing.expectEqualSlices(c.jnb_star_view, &stars1, &stars2);
+}
+
+test "jnb_fireworks_event_drain reports queued rabbit draws in tick order" {
+    var storage: FireworksStorageBuf = .{};
+    // detonation_a's seed (core/fireworks_difftest.zig) spawns and detonates
+    // rabbits within a few hundred ticks -- enough to exercise both the
+    // rabbit-draw (`a == 2`) and gore-draw (`a == 0`) JNB_EVENT_DRAW shapes,
+    // and the JNB_EVENT_SFX detonation cue, in one deterministic run.
+    const config = makeFireworksConfig(0xC0FFEE);
+    try fireworksInitOk(&storage, &config);
+
+    var saw_rabbit_draw = false;
+    var saw_gore_draw = false;
+    var saw_sfx = false;
+    for (0..600) |_| {
+        try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_fireworks_step(storage.ptr()));
+        const queued = c.jnb_fireworks_event_count(storage.ptr());
+        if (queued == 0) continue;
+        var events: [64]c.jnb_event = undefined;
+        var drained: usize = 0;
+        try std.testing.expectEqual(
+            @as(c.jnb_result, c.JNB_OK),
+            c.jnb_fireworks_event_drain(storage.ptr(), &events, events.len, &drained),
+        );
+        for (events[0..drained]) |e| {
+            if (e.kind == c.JNB_EVENT_DRAW and e.a == 2) saw_rabbit_draw = true;
+            if (e.kind == c.JNB_EVENT_DRAW and e.a == 0) saw_gore_draw = true;
+            if (e.kind == c.JNB_EVENT_SFX) saw_sfx = true;
+        }
+    }
+    try std.testing.expect(saw_rabbit_draw);
+    try std.testing.expect(saw_gore_draw);
+    try std.testing.expect(saw_sfx);
+}
+
+test "jnb_fireworks_stars_copy checksum after 600 ticks from seed 0xC0FFEE matches the pinned golden value" {
+    // Pinned so the Swift screensaver's own test suite can assert the exact
+    // same constant (screensaver/Tests/FireworksKitTests) -- the two sides
+    // can never silently drift apart on star-field determinism.
+    var storage: FireworksStorageBuf = .{};
+    const config = makeFireworksConfig(0xC0FFEE);
+    try fireworksInitOk(&storage, &config);
+
+    for (0..600) |_| {
+        try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_fireworks_step(storage.ptr()));
+    }
+
+    var stars: [c.JNB_FIREWORKS_NUM_STARS]c.jnb_star_view = undefined;
+    var required: usize = 0;
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_OK),
+        c.jnb_fireworks_stars_copy(storage.ptr(), &stars, stars.len, &required),
+    );
+
+    var checksum: u32 = 0;
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_OK),
+        c.jnb_checksum(@ptrCast(&stars), @sizeOf(@TypeOf(stars)), &checksum),
+    );
+    try std.testing.expectEqual(@as(u32, 0x3ae19a6a), checksum);
 }

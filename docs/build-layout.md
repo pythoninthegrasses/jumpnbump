@@ -10,9 +10,10 @@ under `backlog/tasks/`.
 
 ```text
 core/          Zig simulation: physics, collision, AI, particles, game loop
-include/       jumpnbump.h — the frozen C ABI between core/ and extension/
+include/       jumpnbump.h — the frozen C ABI between core/ and its consumers
 extension/     godot-cpp GDExtension shim, 1:1 forwarding to the C ABI
 game/          Godot 4.7.1 project (simulation/ presentation/ platform/ content/)
+screensaver/   native Swift/Metal fireworks screensaver, linking core/'s ABI directly
 tools/         Python asset pipeline + boundary/purity validator scripts
 third_party/   godot-cpp, vendored as a SHA-pinned git submodule
 
@@ -46,25 +47,38 @@ main.c, menu.c, filter.c, fireworks.c, sdl/, modify/, data/
   no branch or tag in `.gitmodules` — the pin is the contract, bumped only by committing a
   new gitlink. See `extension/README.md` for the full rationale (no 4.7 tag exists upstream;
   `api_version=4.7` is an SCons option, not a checkout).
+- **`screensaver/`** — a native Swift/Metal macOS `ScreenSaverView` (`TASK-017.03`) delivering
+  `core/fireworks.zig`'s screensaver mode, linking `core/`'s Zig static library directly through
+  `include/jumpnbump.h`'s `jnb_fireworks_*` group — the same header `extension/`'s GDExtension
+  shim consumes, but with zero Godot involvement (`backlog/decisions/decision-001`). Reads
+  `game/content/sprites/*.json`'s already-exported atlases and `data/level.pcx`'s palette
+  directly; no `.tres`/`AtlasTexture` resources, those are Godot-specific. A SwiftPM package
+  (`Package.swift`), not an Xcode project — see its own README for the package layout and the
+  `build.sh` step that links it into a `.saver` bundle.
 - **Legacy tree** (`main.c`, `sdl/`, `modify/`, `data/`) — retained forever, never deleted.
   It's the Tier-B differential-test oracle (`docs/porting-playbook.md`); any behavioral
   drift in the port shows up as a failing diff against it.
 
 ## Build systems
 
-Three build systems are siblings — none absorbs another:
+Four build systems are siblings — none absorbs another:
 
 - **`core/build.zig`** — scoped to `core/`, not the repo root.
 - **`extension/SConstruct`** — godot-cpp's SCons build, linking the Zig static lib via
   `env.File(...)` so a core rebuild triggers a relink (never a bare `-l`/`-L` flag)
   (`TASK-012.04`).
+- **`screensaver/Package.swift` + `screensaver/build.sh`** — SwiftPM builds the `FireworksKit`
+  library (and its `swift test` suite); `build.sh` then links it, `core/zig-out/lib/libjumpnbump.a`,
+  and the compiled Metal shader into the `.saver` bundle SwiftPM alone can't produce
+  (`TASK-017.03`).
 - **The legacy top-level `Makefile`** — unchanged, still the only way to build the SDL
   binary, `gobpack`/`jnbpack`/`jnbunpack`, and `data/jumpbump.dat` (`task legacy:build`,
   TASK-015.05 — no longer part of the default `task check` gate).
 
-`taskfile.yml` is the single entry point above all three, via `taskfiles/core.yml`
+`taskfile.yml` is the single entry point above all four, via `taskfiles/core.yml`
 (`zig build abi`), `taskfiles/extension.yml` (the SCons build, vendoring
-`third_party/godot-cpp` on demand), and `taskfiles/game.yml`. `task run` chains
+`third_party/godot-cpp` on demand), `taskfiles/game.yml`, and `taskfiles/screensaver.yml`
+(darwin-only, not part of `task check` — see that section below). `task run` chains
 `extension:build` then `game:run` as the one-shot way to play the Godot build from a
 clean clone.
 
@@ -114,6 +128,10 @@ Target ordering, cheapest static check first:
 
 Each step lands as its owning task completes; `check` is only extended, never reordered
 around a step that doesn't exist yet.
+
+`screensaver:build`/`screensaver:test` (`taskfiles/screensaver.yml`, `TASK-017.03`) are
+deliberately **not** part of `check` — `check` is the gate expected to run on every CI platform,
+and the screensaver is darwin-only, `platforms: [darwin]`, same treatment as `release:*`.
 
 ## Toolchain
 

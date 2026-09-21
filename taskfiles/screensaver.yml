@@ -1,0 +1,81 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: "3.0"
+
+# TASK-017.03: the native Swift/Metal fireworks screensaver -- a fourth
+# sibling build graph (docs/build-layout.md), never touching Godot
+# (backlog/decisions/decision-001). darwin-only, deliberately not part of
+# `task check` (see docs/build-layout.md's "task check wiring" section) --
+# same treatment as `release:*`.
+
+tasks:
+  build:
+    desc: "Assemble JumpnbumpFireworks.saver via screensaver/build.sh"
+    summary: |
+      Builds core/'s ABI static library first, then screensaver/build.sh:
+      `swift build` for FireworksKit, `xcrun metal`/`metallib` for the
+      shader, and a final `swiftc -Xlinker -bundle -Xlinker -all_load`
+      link into screensaver/.build/JumpnbumpFireworks.saver.
+
+      Example:
+        task screensaver:build
+    platforms: [darwin]
+    deps: [":core:build-abi"]
+    dir: screensaver
+    cmds:
+      - ./build.sh release
+
+  test:
+    desc: "Run FireworksKit's XCTest suite (swift test)"
+    summary: |
+      Requires core/'s ABI static library (FireworksKit links it
+      directly) -- pulls in core:build-abi first.
+
+      Example:
+        task screensaver:test
+    platforms: [darwin]
+    deps: [":core:build-abi"]
+    dir: screensaver
+    cmds:
+      - swift test
+
+  install:
+    desc: "Install JumpnbumpFireworks.saver into ~/Library/Screen Savers"
+    summary: |
+      Builds first (task screensaver:build), then copies the bundle so
+      it appears in System Settings > Screen Saver. macOS may require an
+      explicit Gatekeeper allow on first load for an ad hoc-signed
+      bundle -- see screensaver/README.md.
+
+      Example:
+        task screensaver:install
+    platforms: [darwin]
+    deps: [build]
+    dir: screensaver
+    cmds:
+      - mkdir -p "$HOME/Library/Screen Savers"
+      - rm -rf "$HOME/Library/Screen Savers/JumpnbumpFireworks.saver"
+      - cp -R .build/JumpnbumpFireworks.saver "$HOME/Library/Screen Savers/JumpnbumpFireworks.saver"
+
+  uninstall:
+    desc: "Remove JumpnbumpFireworks.saver from ~/Library/Screen Savers"
+    platforms: [darwin]
+    cmds:
+      - rm -rf "$HOME/Library/Screen Savers/JumpnbumpFireworks.saver"
+
+  host:
+    desc: "Build and run the dev host harness -- eyeball the animation without touching System Settings"
+    summary: |
+      Compiles screensaver/host/main.swift and runs it against the
+      freshly built .saver bundle, hosting the real ScreenSaverView (the
+      same NSBundle+NSPrincipalClass load path System Settings uses) in
+      a plain window.
+
+      Example:
+        task screensaver:host
+    platforms: [darwin]
+    deps: [build]
+    dir: screensaver
+    cmds:
+      - swiftc -framework ScreenSaver -o .build/host host/main.swift
+      - .build/host .build/JumpnbumpFireworks.saver

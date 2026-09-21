@@ -50,6 +50,13 @@ Tier-B is the load-bearing tier for the porting phase: it *is* the oracle-differ
 the task description calls "oracle" verification. A subtask is not done until its module
 passes Tier-B with zero mismatches.
 
+Tier-D is specifically the *Godot* extension boundary — it doesn't cover the native Swift/Metal
+screensaver delivery path (`screensaver/`, `TASK-017.03`), which never touches Godot
+(`backlog/decisions/decision-001`). That path is verified by its own `swift test` suite
+(`screensaver/Tests/FireworksKitTests`) plus a golden `jnb_fireworks_stars_copy` checksum pinned
+identically on both sides of the ABI (`core/abitest.zig`'s own Tier-C test and the Swift suite),
+so the two can never silently drift apart on determinism.
+
 ## Cross-module rule: no `@import` between ported modules
 
 Each ported `.zig` file is its own translation unit. `@import`-ing another ported module

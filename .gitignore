@@ -29,6 +29,9 @@ stderr.txt
 .zig-cache/
 zig-out/
 
+# SwiftPM build artifacts (screensaver/, TASK-017.03)
+screensaver/.build/
+
 # SCons/GDExtension build artifacts (extension/, TASK-012.04/TASK-012.05).
 # game/bin/*.gdextension is checked in (it's config, not a build output).
 *.os
