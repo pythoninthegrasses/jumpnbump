@@ -6,8 +6,10 @@
 -P macOS=-self-hosted
 -P ARM64=-self-hosted
 
-# Use catthehacker's image for ubuntu-latest jobs
+# Use catthehacker's image for ubuntu-latest / blacksmith jobs (blacksmith
+# runners aren't available locally; falls back to a plain Ubuntu container)
 -P ubuntu-latest=catthehacker/ubuntu:act-latest
+-P blacksmith-4vcpu-ubuntu-2404=catthehacker/ubuntu:act-latest
 
 # Match host architecture (Apple Silicon)
 --container-architecture=linux/arm64
