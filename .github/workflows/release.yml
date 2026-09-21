@@ -1,0 +1,128 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release-tag:
+        description: 'Attach assets to this release tag (e.g. v1.51.1). Defaults to latest release.'
+        required: false
+        default: 'latest'
+        type: string
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-macos:
+    name: Build macOS (ARM64)
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Setup self-hosted runner PATH
+        run: |
+          echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
+          echo "/opt/homebrew/bin:/opt/homebrew/sbin" >> "$GITHUB_PATH"
+
+      - name: Resolve release tag
+        uses: ./.github/actions/resolve-release-tag
+        with:
+          event-name: ${{ github.event_name }}
+          release-tag: ${{ inputs.release-tag }}
+          release-tag-name: ${{ github.event.release.tag_name }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Ship signed, notarized DMG
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_API_KEY_B64: ${{ secrets.APPLE_API_KEY_B64 }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: task release:ship-macos
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: macos-arm64
+          path: game/build/macos/*.dmg
+          retention-days: 7
+
+      - name: Upload release assets
+        if: env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$RELEASE_TAG" --clobber \
+            game/build/macos/*.dmg
+
+  build-screensaver:
+    name: Build fireworks screensaver (ARM64)
+    needs: [build-macos]
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Setup self-hosted runner PATH
+        run: |
+          echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
+          echo "/opt/homebrew/bin:/opt/homebrew/sbin" >> "$GITHUB_PATH"
+
+      - name: Resolve release tag
+        uses: ./.github/actions/resolve-release-tag
+        with:
+          event-name: ${{ github.event_name }}
+          release-tag: ${{ inputs.release-tag }}
+          release-tag-name: ${{ github.event.release.tag_name }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign, notarize, and staple JumpnbumpFireworks.saver
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_API_KEY_B64: ${{ secrets.APPLE_API_KEY_B64 }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: task release:ship-screensaver
+
+      - name: Package stapled bundle for distribution
+        run: |
+          rm -f screensaver/.build/JumpnbumpFireworks.saver.zip
+          ditto -c -k --keepParent \
+            screensaver/.build/JumpnbumpFireworks.saver \
+            screensaver/.build/JumpnbumpFireworks.saver.zip
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: fireworks-screensaver
+          path: screensaver/.build/JumpnbumpFireworks.saver.zip
+          retention-days: 7
+
+      - name: Upload release assets
+        if: env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$RELEASE_TAG" --clobber \
+            screensaver/.build/JumpnbumpFireworks.saver.zip

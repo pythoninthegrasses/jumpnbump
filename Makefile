@@ -23,7 +23,7 @@ $(MODIFY_TARGET): globals.h
 	cd modify && make
 
 $(TARGET): $(OBJS) $(SDL_TARGET) data globals.h
-	$(CC) -o $(TARGET) $(OBJS) $(LIBS) $(SDL_TARGET)
+	$(CC) -o $(TARGET) $(OBJS) $(SDL_TARGET) $(LIBS)
 
 $(OBJS): globals.h
 

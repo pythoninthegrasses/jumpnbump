@@ -1,0 +1,36 @@
+name: 'Resolve Release Tag'
+description: 'Resolve the release tag and export RELEASE_TAG to the environment.'
+
+inputs:
+  event-name:
+    description: 'github.event_name from the calling workflow'
+    required: true
+  release-tag:
+    description: 'The release-tag workflow input (defaults to "latest")'
+    required: false
+    default: 'latest'
+  release-tag-name:
+    description: 'github.event.release.tag_name for release events'
+    required: false
+    default: ''
+  github-token:
+    description: 'GitHub token for gh CLI'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Resolve release tag
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        if [ "${{ inputs.event-name }}" = "release" ]; then
+          tag="${{ inputs.release-tag-name }}"
+        elif [ "${{ inputs.release-tag }}" != "latest" ] && [ -n "${{ inputs.release-tag }}" ]; then
+          tag="${{ inputs.release-tag }}"
+        else
+          tag="$(gh release view --json tagName -q .tagName)"
+        fi
+        echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+        echo "Resolved release tag: $tag"
