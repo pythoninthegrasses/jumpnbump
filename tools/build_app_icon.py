@@ -2,8 +2,16 @@
 
 # /// script
 # requires-python = ">=3.13,<3.14"
-# dependencies = ["Pillow"]
+# dependencies = ["Pillow>=12.3.0"]
+#
+# [tool.uv]
+# exclude-newer = "2026-09-22"
 # ///
+
+# Pillow>=12.3.0 is the version this icon crop was diagnosed and tested
+# against (TASK-020); exclude-newer pins uv's resolution to the day this was
+# reviewed so re-runs stay reproducible instead of drifting to newer Pillow
+# releases.
 
 """
 Generates game/icon.png (TASK-009) by cropping one frame out of the already

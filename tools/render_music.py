@@ -2,8 +2,15 @@
 
 # /// script
 # requires-python = ">=3.13,<3.14"
-# dependencies = ["soundfile", "numpy"]
+# dependencies = ["soundfile>=0.14.0", "numpy>=2.5.3"]
+#
+# [tool.uv]
+# exclude-newer = "2026-09-22"
 # ///
+
+# soundfile>=0.14.0 and numpy>=2.5.3 are their latest stable releases as of
+# this pin (TASK-020); exclude-newer caps uv's resolution to that same day
+# so re-runs stay reproducible instead of drifting to newer releases.
 
 """
 Renders bump.mod/jump.mod/scores.mod to looping OGG Vorbis under
