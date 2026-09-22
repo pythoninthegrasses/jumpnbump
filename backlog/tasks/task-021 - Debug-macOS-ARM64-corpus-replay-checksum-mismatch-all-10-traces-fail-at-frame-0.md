@@ -3,9 +3,10 @@ id: TASK-021
 title: >-
   Debug macOS/ARM64 corpus-replay checksum mismatch (all 10 traces fail at frame
   0)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-21 23:30'
+updated_date: '2026-09-22 15:27'
 labels: []
 dependencies: []
 references:
@@ -60,9 +61,21 @@ Where to start looking: `res://tests/test_corpus_replay.gd` (the test itself, in
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Root cause of the frame-0 checksum mismatch between x86_64 and ARM64 builds is identified and documented
+- [x] #1 Root cause of the frame-0 checksum mismatch between x86_64 and ARM64 builds is identified and documented
 - [ ] #2 `test_every_corpus_trace_replays_with_matching_checksums` passes on both Linux (x86_64) and macOS (ARM64) CI runners for all 10 corpus traces
-- [ ] #3 If the root cause is a genuine simulation/ABI bug, it's fixed in core/ (or wherever it lives) without breaking the existing passing x86_64 behavior
-- [ ] #4 If the root cause is instead that the recorded corpus checksums are architecture-sensitive by design flaw (e.g. captured only on x86_64 and never validated cross-arch), that's called out explicitly and the fix addresses the actual non-determinism source rather than just re-recording checksums per-architecture
-- [ ] #5 A short note is added explaining why this was never caught by CI before (task-graph gap, now fixed) so it doesn't read as a sudden regression in git history
+- [x] #3 If the root cause is a genuine simulation/ABI bug, it's fixed in core/ (or wherever it lives) without breaking the existing passing x86_64 behavior
+- [x] #4 If the root cause is instead that the recorded corpus checksums are architecture-sensitive by design flaw (e.g. captured only on x86_64 and never validated cross-arch), that's called out explicitly and the fix addresses the actual non-determinism source rather than just re-recording checksums per-architecture
+- [x] #5 A short note is added explaining why this was never caught by CI before (task-graph gap, now fixed) so it doesn't read as a sudden regression in git history
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Root cause: core/rnd.zig wrapped libc rand()/srand() directly. glibc (TYPE_3 degree-31 additive-feedback) and Apple libc (Lehmer/minstd) implement rand() completely differently, so the same -seed produced different draws depending on host libc -- confirmed directly on this machine (srand(1) then rand()x6: glibc 1804289383,846930886,...; Apple 16807,282475249,...). steer.zig's position_player() draws rnd() during jnb_world_init (before tick 0 ever runs), so player spawn coordinates -- folded into the checksum -- differed from frame 0, explaining the exact symptom (all 10 traces, frame 0, cross-collisions like 03/04 and 06/10 sharing a checksum since they share init config). The checksum/dump path itself (core/world.zig's fnv1a32 + explicit little-endian field serialization) was ruled out -- confirmed portable, no struct-layout or padding sensitivity.
+
+Fix: core/rnd.zig, core/c_ref/rnd.c, and a new rnd_glibc.c/.h (linked into main.c) all reimplement glibc's TYPE_3 generator directly instead of calling host libc. Verified bit-for-bit against real glibc rand() (docker run gcc:13) for 100,000 consecutive draws from seed 1 -- zero mismatches. Zero corpus/.meta.json changes: the generator reproduces the exact stream the corpus was recorded against. `zig build test` (119/119, rnd.zig now carries its own unit tests pinning the known glibc sequences) and `zig build abitest` (26/26, including the corpus-pinned 0x1584ec43) both green on macOS/ARM64.
+
+AC#2 status: 9 of the 10 corpus traces (verified via `task game:test`, the real gdUnit4/GDExtension suite) now replay with matching checksums from frame 0 through their full length -- up from 0/10. The 10th, 05-four-players-ai, still fails, but at frame 324, not frame 0, and is proven unrelated to rnd() portability: the same 100,000-draw glibc comparison covers the ~23,738 rnd() calls needed to reach frame 324; a direct ABI replay harness (bypassing Godot) reproduces the exact same divergence; no player kill/bump event coincides with frame 324; and core/objects_difftest.zig's "splash_smoke" scenario already fails identically on unmodified main (confirmed via a throwaway worktree at commit 9599516), pointing at a pre-existing, separate porting bug in update_objects()'s particle-spawn logic that trace 05 is simply the only corpus trace long/busy enough to reach. Filed as TASK-022 with full repro steps rather than folded into this task, since it's a different bug class (simulation-logic porting fidelity, not RNG portability) and AC#4 explicitly asks to fix the actual non-determinism source, not paper over an unrelated one.
+
+Two pinned fireworks-star checksums (core/abitest.zig, screensaver/Tests/FireworksKitTests) needed updating -- they were captured on this host's old, non-portable generator and are outside the cross-host corpus, so this doesn't conflict with the "zero corpus fixture churn" property above.
+<!-- SECTION:NOTES:END -->
