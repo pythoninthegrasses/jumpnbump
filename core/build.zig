@@ -358,7 +358,24 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
             mod_test.root_module.addObjectFile(flies_ref);
         }
         if (std.mem.eql(u8, file, "steer_difftest.zig")) {
-            mod_test.root_module.addCSourceFile(.{ .file = b.path("c_ref/sim_harness.c"), .flags = &.{"-fwrapv"} });
+            // Pre-compiled as its own object, not addCSourceFile straight into
+            // this root module: this binary @imports core/steer.zig, whose own
+            // weak player_raw/objects_raw/ban_map_raw fallbacks (for when
+            // steer.zig is its own standalone Tier-A test root) collide with
+            // sim_harness.c's real definitions if Zig's own module graph has to
+            // reconcile a weak Zig-level export against a C source folded into
+            // the same module -- see game_loop_difftest.zig's identical fix
+            // below. Pre-compiling sim_harness.c and linking the object lets
+            // ordinary weak-symbol override (strong beats weak) resolve it at
+            // the final link step instead, where it actually works.
+            const steer_dt_harness_mod = b.createModule(.{
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+            });
+            steer_dt_harness_mod.addCSourceFile(.{ .file = b.path("c_ref/sim_harness.c"), .flags = &.{"-fwrapv"} });
+            const steer_dt_harness_obj = b.addObject(.{ .name = "steer_dt_harness", .root_module = steer_dt_harness_mod });
+            mod_test.root_module.addObjectFile(steer_dt_harness_obj.getEmittedBin());
             mod_test.root_module.addObjectFile(rnd_ref);
             mod_test.root_module.addObjectFile(steer_ref);
             // TASK-011.04: add_object()/update_objects() now live in
@@ -385,7 +402,35 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
             // storage for objects_raw/ban_map_raw the way it used to; this
             // binary needs sim_harness.c's definitions directly, same as
             // steer_difftest.zig/cpu_move_difftest.zig/collision_difftest.zig.
-            mod_test.root_module.addCSourceFile(.{ .file = b.path("c_ref/sim_harness.c"), .flags = &.{"-fwrapv"} });
+            //
+            // TASK-022: pre-compiled as its own object, not addCSourceFile
+            // straight into this root module -- this binary @imports
+            // core/steer.zig for object_anims/ObjectAnim/AnimFrame, and its
+            // weak player_raw/objects_raw/ban_map_raw fallbacks silently split
+            // from sim_harness.c's real definitions into two distinct
+            // addresses when the C source is folded into the same Zig module
+            // graph instead of linked as a separate object (confirmed with
+            // `nm -m`: two `objects_raw` symbols at different addresses, one
+            // `(__DATA,__bss) non-external` the Zig side binds, one
+            // `(__DATA,__common) external` the C side binds) -- every Zig-side
+            // read/write (seedObject, snapshot/restore, compareObjects) landed
+            // on a world the C reference's add_object()/update_objects() never
+            // touched, so every scenario after the vacuously-empty "springs"
+            // one (default_ban_map has no BAN_SPRING tile, so it seeds
+            // nothing) was comparing live Zig state against an untouched C
+            // snapshot -- not a real add_object()/update_objects() porting
+            // bug. Same fix game_loop_difftest.zig/fireworks_difftest.zig
+            // already use: pre-compile sim_harness.c and link the resulting
+            // object so ordinary weak-symbol override (strong beats weak)
+            // resolves it at the final link step instead.
+            const objects_dt_harness_mod = b.createModule(.{
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+            });
+            objects_dt_harness_mod.addCSourceFile(.{ .file = b.path("c_ref/sim_harness.c"), .flags = &.{"-fwrapv"} });
+            const objects_dt_harness_obj = b.addObject(.{ .name = "objects_dt_harness", .root_module = objects_dt_harness_mod });
+            mod_test.root_module.addObjectFile(objects_dt_harness_obj.getEmittedBin());
             // The C reference's rnd() goes through c_rnd_from -> rnd_mod.rnd
             // (the harness's export), and objects.zig reaches rnd as an extern
             // fn; both bind rnd.zig's export, so link it like the difftests
@@ -395,7 +440,19 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
             mod_test.root_module.addObjectFile(objects_ref);
         }
         if (std.mem.eql(u8, file, "collision_difftest.zig")) {
-            mod_test.root_module.addCSourceFile(.{ .file = b.path("c_ref/sim_harness.c"), .flags = &.{"-fwrapv"} });
+            // TASK-022: pre-compiled as its own object for the same reason as
+            // objects_difftest.zig/steer_difftest.zig above -- this binary
+            // @imports core/steer.zig too, so folding sim_harness.c straight
+            // into this root module splits player_raw/objects_raw/ban_map_raw
+            // into two addresses instead of one shared world.
+            const collision_dt_harness_mod = b.createModule(.{
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+            });
+            collision_dt_harness_mod.addCSourceFile(.{ .file = b.path("c_ref/sim_harness.c"), .flags = &.{"-fwrapv"} });
+            const collision_dt_harness_obj = b.addObject(.{ .name = "collision_dt_harness", .root_module = collision_dt_harness_mod });
+            mod_test.root_module.addObjectFile(collision_dt_harness_obj.getEmittedBin());
             mod_test.root_module.addObjectFile(rnd_ref);
             mod_test.root_module.addObjectFile(collision_ref);
             // The replayed tick runs the extracted steer_players (the pair

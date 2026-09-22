@@ -177,16 +177,41 @@ pub fn loadDefaultAnims() void {
 
 // Weak fallback definitions for the extern world mirrors, used when this
 // module is its own test root (standalone `zig build test`); a difftest or
-// game-loop link supplies the shared harness storage instead, and the
-// linker resolves each extern to exactly one definition.
+// game-loop link supplies the shared harness storage instead.
+//
+// TASK-022: gated on is_own_test_root rather than emitted unconditionally.
+// `.linkage = .weak` was meant to let an ordinary weak-vs-strong link
+// resolve each extern to exactly one definition when a difftest binary
+// links both this module (imported, not root) and c_ref/sim_harness.c's
+// real (non-weak) storage -- but Zig 0.16.0's self-hosted incremental
+// Mach-O linker (the one `zig build test`/`difftest`'s `--listen=-`
+// test-server protocol always uses, independent of -Doptimize and of
+// whether the C source is folded into the same module or pre-compiled as
+// its own object) does not actually merge the two: `nm -m` on an affected
+// binary shows two distinct `objects_raw` symbols at two different
+// addresses (one `(__DATA,__bss) non-external`, one `(__DATA,__common)
+// external`), so Zig-compiled code and C-compiled code silently mutate two
+// separate "shared" worlds instead of one. core/objects_difftest.zig's
+// splash/smoke/butterfly/fur/flesh scenarios were comparing live Zig state
+// against a C snapshot the C reference never touched -- not a real
+// add_object()/update_objects() porting bug. Emitting the fallback only
+// when steer.zig is genuinely the compilation's own root sidesteps the
+// weak/strong merge entirely: no other binary that imports steer.zig ever
+// sees this symbol at all, so there is exactly one definition (the
+// harness's) to resolve against, by construction rather than by the
+// linker's cooperation.
+const is_own_test_root = @import("root") == @This();
+
 var unit_player: [max_players]Player = [_]Player{.{}} ** max_players;
 var unit_objects: [num_objects]Object = [_]Object{.{}} ** num_objects;
 var unit_ban_map: [world.ban_rows][world.ban_cols]u32 = default_ban_map;
 
 comptime {
-    @export(&unit_player, .{ .name = "player_raw", .linkage = .weak });
-    @export(&unit_objects, .{ .name = "objects_raw", .linkage = .weak });
-    @export(&unit_ban_map, .{ .name = "ban_map_raw", .linkage = .weak });
+    if (is_own_test_root) {
+        @export(&unit_player, .{ .name = "player_raw", .linkage = .weak });
+        @export(&unit_objects, .{ .name = "objects_raw", .linkage = .weak });
+        @export(&unit_ban_map, .{ .name = "ban_map_raw", .linkage = .weak });
+    }
 }
 
 /// pogostick/bunnies_in_space/jetpack/blood_is_thicker_than_water
