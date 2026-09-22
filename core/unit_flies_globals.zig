@@ -1,8 +1,17 @@
 // Standalone-build backing for core/flies.zig's Tier-A unit tests: the
-// player_raw/ban_map_raw weak fallback (TASK-011.07 moved it here) that
-// flies.zig's extern mirrors bind to when this file is its own test root
-// (a difftest or the game-loop link supplies core/c_ref/sim_harness.c's
-// real storage instead, and the linker prefers the non-weak symbol).
+// player_raw/ban_map_raw fallback (TASK-011.07 moved it here) that
+// flies.zig's extern mirrors bind to. Only linked into flies.zig's own
+// standalone `zig build test` binary (see core/build.zig), so there is no
+// competing definition in that link to override -- hence a plain (non-weak)
+// export. TASK-023: this used to be `.linkage = .weak`, matching the
+// intent of "yield to a real definition if one exists," but Zig 0.16.0
+// compiles a weak `@export` of a file-scope `var` as a *non-external*
+// (private) symbol (confirmed with `nm -m`: `non-external _player_raw`
+// instead of `weak external`), which is invisible outside this
+// object file and left flies.zig's own Tier-A test unable to link at all.
+// A plain export doesn't have that problem and is safe here precisely
+// because this object is never linked alongside another definition of the
+// same symbol.
 //
 // This TU deliberately does NOT @import("flies.zig"): importing the module
 // here would drag flies.zig's own update_flies/spawn_flies exports into
@@ -62,6 +71,6 @@ var unit_player: [4]Player = [_]Player{.{}} ** 4;
 var unit_ban_map: [ban_rows][ban_cols]c_uint = default_ban_map;
 
 comptime {
-    @export(&unit_player, .{ .name = "player_raw", .linkage = .weak });
-    @export(&unit_ban_map, .{ .name = "ban_map_raw", .linkage = .weak });
+    @export(&unit_player, .{ .name = "player_raw" });
+    @export(&unit_ban_map, .{ .name = "ban_map_raw" });
 }

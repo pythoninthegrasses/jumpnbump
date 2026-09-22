@@ -44,13 +44,9 @@ fn nextRaw() u32 {
     const result: u32 = (@as(u32, @bitCast(state[fptr])) >> 1) & 0x7fffffff;
 
     fptr += 1;
-    if (fptr >= deg) {
-        fptr = 0;
-        rptr += 1;
-    } else {
-        rptr += 1;
-        if (rptr >= deg) rptr = 0;
-    }
+    if (fptr >= deg) fptr = 0;
+    rptr += 1;
+    if (rptr >= deg) rptr = 0;
 
     return result;
 }
@@ -86,6 +82,15 @@ pub fn seed(seed_: u32) void {
     rptr = 0;
 
     for (0..deg * 10) |_| _ = nextRaw();
+}
+
+/// Cross-module entry point for other ported modules that reach rnd() as an
+/// extern fn per the no-@import rule (core/flies.zig's own Tier-A tests):
+/// the same seed(), reached without an @import between ported modules
+/// (playbook rule), the same arrangement core/steer.zig's sfxRecordZ/
+/// sfxResetZ use for its own cross-module entry points.
+pub export fn seedZ(seed_val: c_uint) void {
+    seed(seed_val);
 }
 
 test "seed(1) reproduces glibc's srandom(1) raw draw sequence" {

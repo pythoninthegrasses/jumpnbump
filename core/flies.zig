@@ -18,9 +18,13 @@
 // (volume_trace_channel/volume_trace_volume below); core/game_loop.zig's
 // step() drains it into the `.sfx_volume` event stream once per tick.
 const std = @import("std");
-const c = @cImport({
-    @cInclude("stdlib.h");
-});
+
+/// seed() (core/rnd.zig) — rnd.zig owns the definition; reached as an
+/// extern fn per the no-@import rule, same as rnd() above. TASK-023: these
+/// tests used to seed via libc's srand(), which has no effect on rnd.zig's
+/// own pure-Zig generator (TASK-021 dropped rnd.zig's libc dependency) --
+/// the tests never actually seeded the generator they exercise.
+extern fn seedZ(seed_val: c_uint) void;
 
 pub const num_flies = 20; // NUM_FLIES
 pub const max_player = 0x7fff; // get_closest_player_to_point's initial *dist
@@ -406,7 +410,7 @@ test "update_flies flees an adjacent player, jittered rnd(3)-1" {
     // expected drift than any one fly's absolute endpoint.
     var seed: u32 = 1;
     while (seed <= 25) : (seed += 1) {
-        c.srand(seed);
+        seedZ(seed);
         resetSwarm(160, 120);
         player_ptr[0].enabled = 1;
         player_ptr[0].x = (140 - 8) << 16;
@@ -427,7 +431,7 @@ test "update_flies flees an adjacent player, jittered rnd(3)-1" {
 test "update_flies chases the player under lord_of_the_flies" {
     var seed: u32 = 1;
     while (seed <= 25) : (seed += 1) {
-        c.srand(seed);
+        seedZ(seed);
         resetSwarm(160, 120);
         lord_of_the_flies = 1;
         player_ptr[0].enabled = 1;
@@ -446,7 +450,7 @@ test "update_flies chases the player under lord_of_the_flies" {
 test "update_flies keeps every fly on a void tile" {
     // The default level's walls sit right where a wandering swarm would
     // walk into them: the C refuses any step onto a non-BAN_VOID tile.
-    c.srand(7);
+    seedZ(7);
     resetSwarm(160, 120);
     player_ptr[0].enabled = 1;
     player_ptr[0].x = (140 - 8) << 16;
@@ -466,7 +470,7 @@ test "update_flies keeps every fly on a void tile" {
 extern var rnd_call_count: c_uint;
 
 test "update_flies drives rnd(3) twice per fly" {
-    c.srand(3);
+    seedZ(3);
     resetSwarm(160, 120);
     const before = rnd_call_count;
     update_flies(1);

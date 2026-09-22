@@ -142,6 +142,26 @@ fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
         // steer.zig above), so it joins this same list.
         if (std.mem.eql(u8, file, "steer.zig") or std.mem.eql(u8, file, "collision.zig") or std.mem.eql(u8, file, "fireworks.zig")) {
             mod.addObjectFile(rnd_native.getEmittedBin());
+            // TASK-023: steer.zig's own standalone Tier-A test root needs
+            // player_raw/objects_raw/ban_map_raw backed by something, same
+            // as flies.zig's own Tier-A test needs unit_flies_globals.zig
+            // below -- see core/unit_steer_globals.zig's header comment for
+            // why steer.zig no longer supplies this fallback itself.
+            // collision.zig/fireworks.zig instead get real storage from
+            // c_ref/sim_harness.c (linked below), so this only needs to
+            // fire for steer.zig's own test.
+            if (std.mem.eql(u8, file, "steer.zig")) {
+                const steer_globals_obj = b.addObject(.{
+                    .name = "unit_steer_globals",
+                    .root_module = b.createModule(.{
+                        .root_source_file = b.path("unit_steer_globals.zig"),
+                        .target = target,
+                        .optimize = optimize,
+                        .link_libc = true,
+                    }),
+                });
+                mod.addObjectFile(steer_globals_obj.getEmittedBin());
+            }
             // The Zig TU exporting is_server/is_net for standalone module
             // builds (see core/unit_net_globals.zig's header comment): compiled
             // as an object, not a test runner, so the module's own test binary
