@@ -18,6 +18,7 @@ env:
   HOMEBREW_NO_ASK: "1"
 
 includes:
+  act: taskfiles/act.yml
   ci: taskfiles/ci.yml
   assets: taskfiles/assets.yml
   core: taskfiles/core.yml
@@ -27,6 +28,7 @@ includes:
   legacy: taskfiles/legacy.yml
   release: taskfiles/release.yml
   screensaver: taskfiles/screensaver.yml
+  zig: taskfiles/zig.yml
 
 tasks:
   default:

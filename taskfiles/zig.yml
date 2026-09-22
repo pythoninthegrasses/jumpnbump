@@ -1,0 +1,137 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: "3.0"
+
+# core/'s own `zig build` steps (core/build.zig): Tier-A unit tests, Tier-B
+# differential tests against renamed C references, the frozen-ABI static
+# library, and its Tier-C ABI conformance suite -- see
+# docs/porting-playbook.md for what each tier means. None of these currently
+# run as part of the root `task check` gate (docs/development.md's "Known CI
+# task-graph gaps"); this taskfile is the documented, single place to run
+# them by hand until that's wired in.
+
+vars:
+  PINNED_ZIG:
+    sh: grep '^zig ' {{.ROOT_DIR}}/.tool-versions | awk '{print $2}'
+
+tasks:
+  _check-zig-version:
+    internal: true
+    desc: "Verify the zig on PATH (root taskfile.yml's env already puts mise's shims first) matches the pin in .tool-versions"
+    cmds:
+      - |
+        set -e
+        found=$(zig version 2>/dev/null || true)
+        if [ "$found" != "{{.PINNED_ZIG}}" ]; then
+          echo "error: zig version mismatch." >&2
+          echo "  Expected: {{.PINNED_ZIG}} (pinned in .tool-versions)" >&2
+          echo "  Found:    ${found:-not found on PATH}" >&2
+          echo "  Fix: mise install zig@{{.PINNED_ZIG}}" >&2
+          exit 1
+        fi
+
+  # core/'s Tier-A/Tier-B tests link bz2 (core/dat.zig's @cImport, flies.zig's
+  # linkSystemLibrary("bz2")). macOS's SDK ships bzlib.h/libbz2.dylib
+  # (Xcode Command Line Tools), so nothing to install there; a bare Ubuntu
+  # image does not ship the -dev headers, so this installs the same
+  # libbz2-dev package taskfiles/ci.yml's _install-linux-deps already pulls
+  # in for the legacy SDL build, scoped down to just the one package zig
+  # itself needs (not SDL/SDL_mixer/SDL_net, which core/'s own tests never
+  # link).
+  _check-linux-bz2:
+    internal: true
+    desc: "Install libbz2-dev via apt (Tier-A/Tier-B's bz2 link dependency, Linux only)"
+    platforms: [linux]
+    cmds:
+      - sudo apt-get update
+      - sudo apt-get install -y libbz2-dev
+    status:
+      - dpkg -s libbz2-dev >/dev/null 2>&1
+
+  format:
+    desc: "Format every core/*.zig file in place (zig fmt)"
+    deps: [_check-zig-version]
+    dir: core
+    cmds:
+      - zig fmt .
+
+  lint:
+    desc: "Check core/*.zig formatting without making changes (zig fmt --check, CI-safe)"
+    deps: [_check-zig-version]
+    dir: core
+    cmds:
+      - zig fmt --check .
+
+  test:
+    desc: "Run core/'s Tier-A unit tests (zig build test)"
+    summary: |
+      Runs every standalone Tier-A unit test file core/build.zig lists
+      (dat.zig, steer.zig, flies.zig, game_loop.zig, ...) -- one module
+      compiled and tested as its own root at a time, per
+      docs/porting-playbook.md. Not part of the root `task check` gate
+      yet (see this file's header comment).
+
+      Example:
+        task zig:test
+    deps: [_check-zig-version, _check-linux-bz2]
+    dir: core
+    cmds:
+      - zig build test
+
+  difftest:
+    desc: "Run core/'s Tier-B differential tests against renamed C references (zig build difftest)"
+    summary: |
+      Behavioral-equivalence checks: each ported .zig module replayed
+      against a pre-port C reference (symbols renamed via the
+      preprocessor) over the TASK-008 corpus. See core/build.zig's
+      addDiffTestStep for the full per-module rationale.
+
+      Example:
+        task zig:difftest
+    deps: [_check-zig-version, _check-linux-bz2]
+    dir: core
+    cmds:
+      - zig build difftest
+
+  abi:
+    desc: "Build core/zig-out/lib/libjumpnbump.a -- delegates to core:build-abi (its macOS objcopy dependency lives there, platform-gated)"
+    cmds:
+      - task: :core:build-abi
+
+  abitest:
+    desc: "Run the Tier-C ABI conformance suite against the built static library (zig build abitest)"
+    summary: |
+      core/abitest.zig reaches abi_lib exclusively through
+      @cImport(jumpnbump.h), never by importing core Zig modules
+      directly (checked separately by
+      tools/validate_abi_test_purity.py) -- the ABI surface's own
+      conformance suite, distinct from Tier-A/Tier-B.
+
+      Example:
+        task zig:abitest
+    deps: [_check-zig-version, abi]
+    dir: core
+    cmds:
+      - zig build abitest
+
+  check:
+    desc: "Every tier core/'s own zig build offers: Tier-A, Tier-B, and Tier-C (test + difftest + abitest)"
+    summary: |
+      Aggregates test/difftest/abitest -- the full gate
+      docs/development.md flags as missing from the root `task check`.
+      Does not include `zig:abi` on its own since abitest already
+      depends on it.
+
+      Example:
+        task zig:check
+    cmds:
+      - task: test
+      - task: difftest
+      - task: abitest
+
+  clean:
+    desc: "Clean core/'s Zig build cache and output (core/.zig-cache, core/zig-out)"
+    dir: core
+    cmds:
+      - rm -rf .zig-cache zig-out
+    silent: true

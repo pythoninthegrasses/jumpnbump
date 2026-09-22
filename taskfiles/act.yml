@@ -1,0 +1,83 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: "3.0"
+
+# Wraps `act` (nektos/act, mise-pinned in .tool-versions) for running
+# .github/workflows/ci.yml's jobs locally. .actrc maps the runner labels and
+# carries the sharp-edge settings documented in docs/development.md -- read
+# that file before trusting a local run's result, especially the
+# --container-architecture note below.
+
+tasks:
+  macos:
+    desc: "Run the macOS CI job locally via act -- .actrc maps self-hosted/macOS/ARM64 to run natively on this host, no Docker (darwin only)"
+    summary: |
+      .actrc maps the `self-hosted`/`macOS`/`ARM64` runner labels to
+      `-self-hosted`, so act runs this job's steps directly on this
+      machine rather than trying to emulate a nonexistent macOS Docker
+      image -- it's really just `task ci:macos-check` driven through
+      the actual workflow YAML (checkout step, PATH setup) instead of
+      by hand, so only meaningful when run on macOS itself.
+
+      Example:
+        task act:macos
+    platforms: [darwin]
+    preconditions:
+      - sh: command -v act >/dev/null 2>&1
+        msg: "act not found on PATH -- run `mise install` (pinned in .tool-versions as aqua:nektos/act)."
+    cmds:
+      - act push -j macos
+
+  linux:
+    desc: "Run the Linux CI job locally via act in Docker, matching the real x86_64 runner (--container-architecture=linux/amd64, docs/development.md)"
+    summary: |
+      The real CI runner (blacksmith-4vcpu-ubuntu-2404) is x86_64; this
+      overrides .actrc's default arm64 (host-matching)
+      --container-architecture so the result is representative --
+      artifacts like game/bin/libjumpnbump.linux.*.x86_64.so only load
+      under this flag. Runs under QEMU emulation, so noticeably slower
+      than `task act:linux-fast`. Run `task act:clean` first if a
+      previous run's containers/volumes might be stale (different
+      architecture, different branch).
+
+      Example:
+        task act:linux
+    preconditions:
+      - sh: command -v act >/dev/null 2>&1
+        msg: "act not found on PATH -- run `mise install` (pinned in .tool-versions as aqua:nektos/act)."
+      - sh: docker info >/dev/null 2>&1
+        msg: "Docker daemon not reachable -- act's linux job runs in a container; start Docker (or OrbStack/Colima) first."
+    cmds:
+      - act push -j linux --container-architecture=linux/amd64
+
+  linux-fast:
+    desc: "Run the Linux CI job locally via act on the host's native arch -- faster, but NOT representative of the real x86_64 runner (see task act:linux)"
+    preconditions:
+      - sh: command -v act >/dev/null 2>&1
+        msg: "act not found on PATH -- run `mise install` (pinned in .tool-versions as aqua:nektos/act)."
+      - sh: docker info >/dev/null 2>&1
+        msg: "Docker daemon not reachable -- act's linux job runs in a container; start Docker (or OrbStack/Colima) first."
+    cmds:
+      - act push -j linux
+
+  clean:
+    desc: "Remove stale act-* Docker containers and volumes (--reuse persists volumes across a plain `docker rm -f`, which can leak a previous run's build artifacts into the next one)"
+    summary: |
+      `--reuse` (set in .actrc) persists a named Docker *volume*, not
+      just a container: `docker rm -f` on the `act-CI-<job>-<hash>`
+      container does not clear the matching
+      `act-CI-<job>-<hash>`/`act-CI-<job>-<hash>-env` volumes (or
+      `act-toolcache`), so stale build artifacts (e.g. `.o` files built
+      for a different architecture) can silently survive a container
+      reset and produce misleading link errors on the next run. This
+      removes both. See docs/development.md for the full account.
+
+      Example:
+        task act:clean
+    preconditions:
+      - sh: docker info >/dev/null 2>&1
+        msg: "Docker daemon not reachable."
+    cmds:
+      - docker ps -a --filter "name=act-" -q | xargs -r docker rm -f
+      - docker volume ls --filter "name=act-" -q | xargs -r docker volume rm
+    silent: true
