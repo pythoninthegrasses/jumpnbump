@@ -60,10 +60,32 @@ checksums for frames the trace actually scripts are recorded. A harness
 replaying these traces should compare checksums up through the trace's
 last frame and can ignore anything the oracle prints after that.
 
+## Cross-platform determinism (TASK-021)
+
+Every checksum recorded here depends on `rnd()`'s exact output sequence
+(docs/checksum-format.md), and until TASK-021, `rnd()` was a thin wrapper
+over host libc `rand()`. That's not one algorithm: glibc's `rand()` is a
+degree-31 additive-feedback generator, while e.g. Apple's libc `rand()` is
+a Lehmer/minstd generator — the same `-seed` produced completely different
+draws, and therefore completely different checksums, depending on which
+libc replayed a trace. This corpus was originally recorded on an x86_64/
+glibc host, so it silently only ever "passed" there; `game:test`'s gdUnit4
+replay reached this test in CI for the first time on 2026-09-21 and failed
+all 10 traces at frame 0 on the macOS/ARM64 runner — not a regression, just
+the first time CI exercised this test on a non-glibc host at all.
+
+`rnd()` (`main.c`, `core/c_ref/rnd.c`, `core/rnd.zig`) now reimplements
+glibc's specific generator directly instead of calling into host libc, so
+the "Adding a new trace" procedure below reproduces byte-identical
+checksums on any host, and the recorded checksums here don't need
+per-architecture variants. If a checksum here is ever wrong on some host
+again, that's a bug in the shared generator, not a reason to re-record a
+platform-specific fixture.
+
 ## Mechanic coverage
 
 | File | Players | AI mask | Flags | Mechanic |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `01-single-player-basic` | 1 | 0 | — | baseline walk/jump/land |
 | `02-two-player-manual` | 2 | 0 | — | 2 human-controlled players, horizontal approach |
 | `03-two-player-ai-kill` | 2 | 1 (p0) | — | AI chases and bump-kills the idle player; gore on (default) |

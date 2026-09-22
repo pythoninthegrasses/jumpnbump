@@ -3,8 +3,10 @@
 // core/c_ref/fixed16.c), wired up in core/build.zig via compileRenamedCRef.
 //
 // rnd (AC#1): 10,000+ calls across a spread of seeds and max values. Both
-// sides consume the same glibc rand() stream; the harness compares call for
-// call from identical PRNG state. fixed16 (AC#2): every helper is a C
+// sides reimplement the same glibc-compatible generator (TASK-021 —
+// portable on purpose, since a real libc rand() differs across hosts); the
+// harness reseeds both from jnb_srand() and compares call for call from
+// identical PRNG state. fixed16 (AC#2): every helper is a C
 // expression from main.c compiled by the same toolchain the oracle uses
 // (with -fwrapv, which the oracle Makefile builds main.c with); the Zig
 // side must match at the overflow/truncation corners (0, ±1, INT_MIN,
@@ -18,11 +20,8 @@ const rnd_zig = @import("rnd.zig");
 const fixed16 = @import("fixed16.zig");
 const world = @import("world.zig");
 
-const c = @cImport({
-    @cInclude("stdlib.h");
-});
-
 extern fn c_rnd(max: c_ushort) c_ushort;
+extern fn jnb_srand(seed: c_uint) void;
 
 extern fn c_fp_add_ref(a: c_int, b: c_int) c_int;
 extern fn c_fp_sub_ref(a: c_int, b: c_int) c_int;
@@ -73,7 +72,7 @@ fn rndFromSeed(seed: c_uint, max: u16) RndPair {
     const got = rnd_zig.rnd(max);
     const count = rnd_zig.rnd_call_count;
     asm volatile ("" ::: .{ .memory = true });
-    c.srand(seed);
+    jnb_srand(seed);
     const want = c_rnd(max);
     asm volatile ("" ::: .{ .memory = true });
     return .{ .got = got, .want = want, .count = count };

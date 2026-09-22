@@ -54,12 +54,14 @@ final class FireworksSimulationTests: XCTestCase {
     /// Pinned identically in core/abitest.zig's own Tier-C test -- the two
     /// sides of the ABI can never silently drift apart on star-field
     /// determinism. If this ever needs to change, core/abitest.zig's
-    /// matching test must change with it, in the same commit.
+    /// matching test must change with it, in the same commit. Updated by
+    /// TASK-021 alongside that test: rnd() moved off host libc rand() onto
+    /// an in-repo, glibc-compatible generator (core/rnd.zig).
     func testStarFieldChecksumAfter600TicksFromSeed0xC0FFEEMatchesTheCorePinnedGoldenValue() throws {
         let sim = try FireworksSimulation(seed: 0xC0FFEE)
         for _ in 0..<600 { sim.step() }
         let checksum = fnv1a32(stars: sim.stars())
-        XCTAssertEqual(checksum, 0x3ae19a6a)
+        XCTAssertEqual(checksum, 0xbe7e8959)
     }
 }
 

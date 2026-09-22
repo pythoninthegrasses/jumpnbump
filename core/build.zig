@@ -47,7 +47,7 @@ fn addCliTools(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
 // Tier-A unit tests for ported Zig modules (docs/porting-playbook.md).
 // Empty until TASK-011.* ports a main.c subsystem into its own core/*.zig
 // module; each porting subtask appends its module's test file here.
-const unit_test_files = [_][]const u8{ "dat.zig", "gob.zig", "pcx.zig", "levelmap.zig", "fixed16.zig", "world.zig", "flies.zig", "steer.zig", "objects.zig", "collision.zig", "game_loop.zig", "asset_runtime.zig", "mod_player.zig", "fireworks.zig" };
+const unit_test_files = [_][]const u8{ "dat.zig", "gob.zig", "pcx.zig", "levelmap.zig", "fixed16.zig", "world.zig", "rnd.zig", "flies.zig", "steer.zig", "objects.zig", "collision.zig", "game_loop.zig", "asset_runtime.zig", "mod_player.zig", "fireworks.zig" };
 
 fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const step = b.step("test", "Run Tier-A unit tests for ported Zig modules");
@@ -546,7 +546,9 @@ fn addAbiStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
         .target = target,
         .optimize = optimize,
         .pic = true,
-        // rnd.zig's seed()/rnd() @cImport stdlib.h for srand()/rand().
+        // dat.zig @cImports bzlib.h (bz2 decompression); rnd.zig no longer
+        // needs libc as of TASK-021 (it reimplements its generator in pure
+        // Zig instead of wrapping libc rand(), which wasn't portable).
         .link_libc = true,
     });
     // core/abi_globals.zig (TASK-012.02): the real player_raw/objects_raw/

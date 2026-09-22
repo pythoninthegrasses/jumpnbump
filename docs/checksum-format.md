@@ -54,3 +54,12 @@ byte-identical `FRAME`/`CHECKSUM` sequences (verified by diffing two runs of
 `tests/fixtures/headless-smoke.jsonl`). Checksums are expected to change from
 frame to frame during active gameplay and to stay reproducible across
 repeated runs of the same input.
+
+This holds across hosts, not just across repeated runs on one host: `rnd()`
+(field 2 above, and every player-position/object-spawn value it seeds)
+reimplements glibc's specific `rand()` algorithm directly (TASK-021) rather
+than calling host libc, since libc `rand()` isn't one algorithm — glibc's,
+Apple's, and musl's all disagree on the same seed. Before TASK-021, the
+`-seed`+`-input` reproducibility above only held per-host; the checksummed
+corpus (`tests/corpus/`) was recorded on an x86_64/glibc host and silently
+never reproduced on any other libc.

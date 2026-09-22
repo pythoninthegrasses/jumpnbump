@@ -1038,7 +1038,10 @@ test "jnb_fireworks_event_drain reports queued rabbit draws in tick order" {
 test "jnb_fireworks_stars_copy checksum after 600 ticks from seed 0xC0FFEE matches the pinned golden value" {
     // Pinned so the Swift screensaver's own test suite can assert the exact
     // same constant (screensaver/Tests/FireworksKitTests) -- the two sides
-    // can never silently drift apart on star-field determinism.
+    // can never silently drift apart on star-field determinism. Updated by
+    // TASK-021: rnd() moved off host libc rand() onto an in-repo,
+    // glibc-compatible generator (core/rnd.zig), so this constant changed
+    // once, uniformly, regardless of which host records it.
     var storage: FireworksStorageBuf = .{};
     const config = makeFireworksConfig(0xC0FFEE);
     try fireworksInitOk(&storage, &config);
@@ -1059,5 +1062,5 @@ test "jnb_fireworks_stars_copy checksum after 600 ticks from seed 0xC0FFEE match
         @as(c.jnb_result, c.JNB_OK),
         c.jnb_checksum(@ptrCast(&stars), @sizeOf(@TypeOf(stars)), &checksum),
     );
-    try std.testing.expectEqual(@as(u32, 0x3ae19a6a), checksum);
+    try std.testing.expectEqual(@as(u32, 0xbe7e8959), checksum);
 }

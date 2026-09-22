@@ -24,6 +24,7 @@
  */
 
 #include "globals.h"
+#include "rnd_glibc.h"
 #include <fcntl.h>
 #ifndef _MSC_VER
 #include <unistd.h>
@@ -3247,7 +3248,7 @@ int init_program(int argc, char *argv[], char *pal)
 		}
 	}
 
-	srand(main_info.headless ? main_info.headless_seed : (unsigned int)time(NULL));
+	jnb_srand(main_info.headless ? main_info.headless_seed : (unsigned int)time(NULL));
 
 	preread_datafile(datfile_name);
 
@@ -3562,13 +3563,12 @@ void deinit_program(void)
 unsigned short rnd(unsigned short max)
 {
 	rnd_call_count++;
-#if (RAND_MAX < 0x7fff)
-#error "rand returns too small values"
-#elif (RAND_MAX == 0x7fff)
-	return (unsigned short)((rand()*2) % (int)max);
-#else
-	return (unsigned short)(rand() % (int)max);
-#endif
+	/* jnb_rand() (rnd_glibc.h, TASK-021) always returns a value in
+	 * [0, 0x7fffffff], the same range libc rand() has on every host
+	 * whose RAND_MAX is 2147483647 (i.e. the #if's "else" branch this
+	 * replaced) — but reproduces glibc's specific stream everywhere,
+	 * so the corpus's recorded checksums are reproducible cross-host. */
+	return (unsigned short)(jnb_rand() % (int)max);
 }
 
 
