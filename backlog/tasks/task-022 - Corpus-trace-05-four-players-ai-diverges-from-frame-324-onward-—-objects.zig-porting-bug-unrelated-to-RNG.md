@@ -3,9 +3,10 @@ id: TASK-022
 title: >-
   Corpus trace 05 (four-players-ai) diverges from frame 324 onward — objects.zig
   porting bug, unrelated to RNG
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-22 15:25'
+updated_date: '2026-09-22 16:37'
 labels: []
 dependencies: []
 references:
@@ -17,6 +18,9 @@ references:
   - >-
     backlog/tasks/task-021 -
     Debug-macOS-ARM64-corpus-replay-checksum-mismatch-all-10-traces-fail-at-frame-0.md
+modified_files:
+  - core/steer.zig
+  - core/build.zig
 priority: high
 type: bug
 ordinal: 67000
@@ -47,9 +51,23 @@ Reproduction (fast, no Godot needed): build `core/zig-out/lib/libjumpnbump.a` (`
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Root cause of the objects_difftest.zig "splash_smoke" scenario mismatch (present on unmodified main) is identified in update_objects()/add_object()-adjacent logic
-- [ ] #2 05-four-players-ai replays with matching checksums through its full length (currently first fails at frame 324)
-- [ ] #3 objects_difftest.zig's particle-scenario test passes with zero mismatches
-- [ ] #4 Fix doesn't change any other corpus trace's recorded checksums (only trace 05 is currently short/busy enough to reach the bug)
-- [ ] #5 test_every_corpus_trace_replays_with_matching_checksums passes 10/10 on macOS/ARM64 (currently 9/10 after TASK-021's fix)
+- [x] #1 Root cause of the objects_difftest.zig "splash_smoke" scenario mismatch (present on unmodified main) is identified in update_objects()/add_object()-adjacent logic
+- [x] #2 05-four-players-ai replays with matching checksums through its full length (currently first fails at frame 324)
+- [x] #3 objects_difftest.zig's particle-scenario test passes with zero mismatches
+- [x] #4 Fix doesn't change any other corpus trace's recorded checksums (only trace 05 is currently short/busy enough to reach the bug)
+- [x] #5 test_every_corpus_trace_replays_with_matching_checksums passes 10/10 on macOS/ARM64 (currently 9/10 after TASK-021's fix)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Root cause was NOT an objects.zig porting bug -- it was a Zig 0.16.0 self-hosted linker defect (both the `--listen=-` test-server incremental linker AND the ordinary `zig build abi` static-lib build) that fails to merge a `.weak`-linkage Zig `@export` with a same-named strong C/Zig definition into one symbol. `nm -m` on the built binaries showed two distinct addresses for `objects_raw`/`player_raw`/`ban_map_raw` (one from steer.zig's `unit_objects`/`unit_player`/`unit_ban_map` weak fallback, one from the real owner) in EVERY binary that imports steer.zig alongside another definition -- including production's core/abi_globals.zig, not just the Tier-B difftest harnesses.
+
+Fix: steer.zig's weak fallback export is now gated behind `const is_own_test_root = @import("root") == @This();` so it only fires when steer.zig is genuinely the compilation's own root (its own standalone Tier-A test) -- every other binary that merely imports it never emits the competing symbol, so there is exactly one definition by construction instead of relying on the linker's (broken) weak/strong resolution. Verified with `nm -m`: duplicate symbols gone from both the difftest binaries and libjumpnbump.a.
+
+core/build.zig: objects_difftest.zig/steer_difftest.zig/collision_difftest.zig's sim_harness.c now pre-compiled as a separate object (matching game_loop_difftest.zig/fireworks_difftest.zig's existing pattern) -- this alone did NOT fix the duplication (confirmed by testing), the steer.zig gate was the actual fix, but the pre-compiled-object pattern is kept for consistency/robustness.
+
+Verification: `zig build difftest` 212/212 passing (was hanging indefinitely on game_loop_difftest/fireworks_difftest before the fix -- root ban_map_raw split caused seedLevelObjects()'s void-tile search to spin forever); a from-scratch C harness driving libjumpnbump.a directly reproduced trace 05's exact frame-324 mismatch (e29841d9 vs d9d89e29) on unmodified main and confirmed it vanishes with the fix (all 10 corpus traces, 400/400 frames on trace 05); `task game:test`'s real gdUnit4 suite now passes 56/56 (was 55/56, same frame-324 failure). core/objects.zig's add_object()/update_objects() port was not touched -- it was already correct.
+
+Known pre-existing, out-of-scope issue: `zig build test` (Tier-A) still fails to compile flies.zig's and steer.zig's own standalone test roots (undefined _ban_map_raw/_player_raw) on both baseline and this fix -- same underlying Zig weak-export unreliability, opposite direction (steer.zig's own root now correctly wants its weak fallback, but Zig's test-runner wrapping means `@import("root") != @This()` even when steer.zig genuinely is the named root_source_file). Not caused by this change; left as a follow-up.
+<!-- SECTION:NOTES:END -->
