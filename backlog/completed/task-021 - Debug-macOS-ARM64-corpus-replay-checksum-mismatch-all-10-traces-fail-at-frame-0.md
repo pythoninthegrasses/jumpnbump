@@ -3,10 +3,10 @@ id: TASK-021
 title: >-
   Debug macOS/ARM64 corpus-replay checksum mismatch (all 10 traces fail at frame
   0)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-21 23:30'
-updated_date: '2026-09-22 15:27'
+updated_date: '2026-09-22 15:33'
 labels: []
 dependencies: []
 references:
