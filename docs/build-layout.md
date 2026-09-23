@@ -71,9 +71,11 @@ Four build systems are siblings — none absorbs another:
   library (and its `swift test` suite); `build.sh` then links it, `core/zig-out/lib/libjumpnbump.a`,
   and the compiled Metal shader into the `.saver` bundle SwiftPM alone can't produce
   (`TASK-017.03`).
-- **The legacy top-level `Makefile`** — unchanged, still the only way to build the SDL
-  binary, `gobpack`/`jnbpack`/`jnbunpack`, and `data/jumpbump.dat` (`task legacy:build`,
-  TASK-015.05 — no longer part of the default `task check` gate).
+- **`taskfiles/legacy.yml`** — ports the legacy root/`sdl/`/`modify`/`data/` Makefiles'
+  build graph to Task (`TASK-019`, no `make` invocation remains anywhere in the repo);
+  still the only way to build the SDL binary, `gobpack`/`jnbpack`/`jnbunpack`, and
+  `data/jumpbump.dat` (`task legacy:build`, TASK-015.05 — no longer part of the default
+  `task check` gate).
 
 `taskfile.yml` is the single entry point above all four, via `taskfiles/core.yml`
 (`zig build abi`), `taskfiles/extension.yml` (the SCons build, vendoring
@@ -108,7 +110,9 @@ on `Build.Step.Compile`.
 
 ## `task check` wiring
 
-Today: `check` runs `make` (the legacy build) — the only gate that exists yet.
+Today: `check` runs `assets:check`, `game:boundary-check`, and `game:test` (`taskfile.yml`) —
+the legacy SDL build (`task legacy:build`) is no longer part of the default gate, kept
+on demand as the difftest oracle instead.
 
 Target ordering, cheapest static check first:
 

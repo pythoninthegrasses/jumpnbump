@@ -2,15 +2,185 @@
 
 version: "3.0"
 
-# TASK-015.05: the legacy SDL build, kept on demand as the difftest oracle.
+# TASK-019: ports the legacy top-level Makefile plus sdl/, modify/,
+# data/'s sub-Makefiles to Task -- no `make` invocation remains
+# anywhere in this repo's build path. Kept on demand as the difftest
+# oracle, or to actually run the pre-Godot build.
+#
+# Link order matters: sdl.a must precede -lSDL_mixer/-lSDL_net/-lbz2/-lz
+# on the final link command, since sdl.a's sound.o is what references
+# -lSDL_mixer's symbols and GNU ld's single-pass resolution drops them
+# otherwise (a real bug in the original root Makefile, fixed there and
+# carried over correctly here -- see TASK-019's task record).
+
+# SDL_CFLAGS/SDL_LIBS (and anything composed from them) are deliberately
+# task-scoped vars, not file-level ones: file-level vars in an included
+# Taskfile are evaluated for every invocation that touches this file,
+# even a task that doesn't need them -- which runs `sdl-config` before
+# ci.yml's _install-linux-deps has installed it on a fresh CI runner.
+# Scoping them to sdl-a/build defers evaluation until those tasks
+# actually run, after their deps (and CI's SDL install step) complete.
+vars:
+  LEGACY_PREFIX: '{{.LEGACY_PREFIX | default "/usr/local"}}'
+  LEGACY_CC: '{{.CC | default "cc"}}'
+  # modify/Makefile's CFLAGS/LIBS
+  MODIFY_CFLAGS: >-
+    -Wall -ansi -pedantic -O2 -ffast-math -funroll-loops
+    -Dstricmp=strcasecmp -Dstrnicmp=strncasecmp -DNDEBUG -I. -I..
+    -DUSE_NET -D_BSD_SOURCE
+  MODIFY_LIBS: "-lm"
 
 tasks:
+  globals-h:
+    internal: true
+    desc: "Generate globals.h from globals.pre (%%PREFIX%% substitution, root Makefile's globals.h rule)"
+    cmds:
+      - sed -e "s#%%PREFIX%%#{{.LEGACY_PREFIX}}#g" < globals.pre > globals.h
+    sources:
+      - globals.pre
+    generates:
+      - globals.h
+
+  jnbmenu-tcl:
+    internal: true
+    desc: "Generate jnbmenu.tcl from jnbmenu.pre (%%PREFIX%% substitution, root Makefile's jnbmenu.tcl rule)"
+    cmds:
+      - sed -e "s#%%PREFIX%%#{{.LEGACY_PREFIX}}#g" < jnbmenu.pre > jnbmenu.tcl
+    sources:
+      - jnbmenu.pre
+    generates:
+      - jnbmenu.tcl
+
+  sdl-a:
+    internal: true
+    desc: "Build sdl.a from sdl/*.c (gfx, interrpt, sound, input -- sdl/Makefile)"
+    deps: ["globals-h"]
+    vars:
+      SDL_CFLAGS:
+        sh: sdl-config --cflags
+      # sdl/Makefile's CFLAGS
+      SDL_LIB_CFLAGS: >-
+        -Wall -ansi -pedantic -O2 -ffast-math -funroll-loops
+        -Dstricmp=strcasecmp -Dstrnicmp=strncasecmp -DNDEBUG -I. -I..
+        {{.SDL_CFLAGS}} -DUSE_SDL -DUSE_NET
+    cmds:
+      - for: [gfx, interrpt, sound, input]
+        cmd: "{{.LEGACY_CC}} {{.SDL_LIB_CFLAGS}} -c -o sdl/{{.ITEM}}.o sdl/{{.ITEM}}.c"
+      - ar cru sdl.a sdl/gfx.o sdl/interrpt.o sdl/sound.o sdl/input.o
+      - ranlib sdl.a
+    sources:
+      - sdl/*.c
+      - sdl/*.h
+      - globals.h
+    generates:
+      - sdl.a
+
+  modify:
+    internal: true
+    desc: "Build gobpack, jnbpack, jnbunpack (modify/Makefile)"
+    deps: ["globals-h"]
+    cmds:
+      - "{{.LEGACY_CC}} {{.MODIFY_CFLAGS}} -o gobpack {{.MODIFY_LIBS}} modify/gobpack.c"
+      - "{{.LEGACY_CC}} {{.MODIFY_CFLAGS}} -o jnbpack {{.MODIFY_LIBS}} modify/jnbpack.c"
+      - "{{.LEGACY_CC}} {{.MODIFY_CFLAGS}} -o jnbunpack {{.MODIFY_LIBS}} modify/jnbunpack.c"
+    sources:
+      - modify/*.c
+      - globals.h
+    generates:
+      - gobpack
+      - jnbpack
+      - jnbunpack
+
+  data:
+    internal: true
+    desc: "Pack data/jumpbump.dat via jnbpack, gob-packing font/numbers/objects/rabbit first (data/Makefile)"
+    deps: ["modify"]
+    cmds:
+      - for: [font, numbers, objects, rabbit]
+        cmd: "cd data && ../gobpack {{.ITEM}}"
+      - >-
+        cd data && ../jnbpack -o jumpbump.dat
+        bump.mod calib.dat death.smp fly.smp
+        font.gob jump.mod jump.smp levelmap.txt
+        level.pcx mask.pcx menu.pcx menumask.pcx
+        numbers.gob objects.gob rabbit.gob scores.mod
+        splash.smp spring.smp
+    sources:
+      - data/bump.mod
+      - data/calib.dat
+      - data/death.smp
+      - data/fly.smp
+      - data/font.pcx
+      - data/font.txt
+      - data/jump.mod
+      - data/jump.smp
+      - data/levelmap.txt
+      - data/level.pcx
+      - data/mask.pcx
+      - data/menu.pcx
+      - data/menumask.pcx
+      - data/numbers.pcx
+      - data/numbers.txt
+      - data/objects.pcx
+      - data/objects.txt
+      - data/rabbit.pcx
+      - data/rabbit.txt
+      - data/scores.mod
+      - data/splash.smp
+      - data/spring.smp
+      - gobpack
+      - jnbpack
+    generates:
+      - data/jumpbump.dat
+      - data/font.gob
+      - data/numbers.gob
+      - data/objects.gob
+      - data/rabbit.gob
+
   build:
     desc: "Build the legacy SDL jumpnbump binary on demand (difftest oracle, or to actually run the pre-Godot build) -- not part of the default `task check` gate"
+    summary: |
+      Reproduces `make all`'s full artifact set without invoking
+      `make`: globals.h/jnbmenu.tcl (sed template substitution),
+      sdl.a (sdl/), gobpack/jnbpack/jnbunpack (modify/),
+      data/jumpbump.dat (data/, via jnbpack), then the jumpnbump
+      binary itself. Each step is freshness-checked via
+      sources/generates, matching `make`'s incremental-rebuild
+      behavior. jumpnbump.svgalib and jumpnbump.fbcon are static
+      checked-in wrapper scripts, not build outputs -- nothing to
+      generate for them.
+
+      Example:
+        task legacy:build
+    deps: ["globals-h", "sdl-a", "data", "jnbmenu-tcl"]
+    vars:
+      SDL_CFLAGS:
+        sh: sdl-config --cflags
+      SDL_LIBS:
+        sh: sdl-config --libs
+      # root Makefile's CFLAGS/LIBS
+      LEGACY_CFLAGS: >-
+        -Wall -O2 -ffast-math -funroll-loops -Dstricmp=strcasecmp
+        -Dstrnicmp=strncasecmp -DUSE_SDL -DNDEBUG -I. {{.SDL_CFLAGS}}
+        -DUSE_NET -DZLIB_SUPPORT -DBZLIB_SUPPORT
+      LEGACY_LIBS: "-lm {{.SDL_LIBS}} -lSDL_mixer -lSDL_net -lbz2 -lz"
     cmds:
-      - make
+      - for: [fireworks, main, menu, filter, rnd_glibc]
+        cmd: "{{.LEGACY_CC}} {{.LEGACY_CFLAGS}} -c -o {{.ITEM}}.o {{.ITEM}}.c"
+      - "{{.LEGACY_CC}} -o jumpnbump fireworks.o main.o menu.o filter.o rnd_glibc.o sdl.a {{.LEGACY_LIBS}}"
+    sources:
+      - "*.c"
+      - "*.h"
+      - globals.h
+      - sdl.a
+      - data/jumpbump.dat
+    generates:
+      - jumpnbump
 
   clean:
-    desc: "Clean the legacy SDL build's objects/binaries"
+    desc: "Clean the legacy SDL build's objects/binaries (sdl/, modify/, data/, and top-level, matching `make clean`)"
     cmds:
-      - make clean
+      - rm -f jumpnbump *.o globals.h jnbmenu.tcl
+      - rm -f sdl.a sdl/*.o
+      - rm -f gobpack jnbpack jnbunpack modify/*.o
+      - rm -f data/jumpbump.dat data/font.gob data/numbers.gob data/objects.gob data/rabbit.gob

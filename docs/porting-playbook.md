@@ -34,7 +34,7 @@ zig build difftest    # Tier-B: Zig vs renamed-C reference over the TASK-008 cor
 zig build abi          # builds core/abi.zig as a static lib (grows real exports at TASK-012.02)
 zig build abitest      # Tier-C: ABI conformance suite
 zig fmt --check .      # every ported .zig file
-(cd .. && task check) # the legacy make build must still link unchanged
+(cd .. && task check) # the legacy build must still link unchanged
 ```
 
 ## Verification tiers
@@ -90,7 +90,7 @@ Ported Zig code must stay integer-only to match.
 There are exactly **two floating-point call sites in the entire simulation**, both
 implicit-double through libm, both with the result immediately `(int)`-cast. Both need an
 integer-exact replacement before their owning subsystem is ported, and both are made worse
-by the legacy Makefile building the oracle with `-ffast-math`:
+by `taskfiles/legacy.yml` building the oracle with `-ffast-math`:
 
 - `main.c:1011` — `cur_dist = (int)sqrt(...)` in `get_closest_player_to_point()`, used by
   the fly AI (`TASK-011.06`). Replace with an integer isqrt.

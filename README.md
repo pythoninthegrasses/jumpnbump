@@ -66,8 +66,8 @@ jumpnbump -port 7777 -net 1 <host_of_player1> <port_of_player1>   # player 2
 ## The legacy SDL build (oracle)
 
 Not part of the default `task check` gate (TASK-015.05) -- build it on demand with
-`task legacy:build`, which just runs `make`. Requires SDL 1.2, SDL_mixer, SDL_net, zlib, and
-bzip2 dev packages. Debian/Ubuntu:
+`task legacy:build` (`taskfiles/legacy.yml`, TASK-019 -- no `make` toolchain required).
+Requires SDL 1.2, SDL_mixer, SDL_net, zlib, and bzip2 dev packages. Debian/Ubuntu:
 
 ```sh
 apt-get install libsdl1.2-dev libsdl-mixer1.2-dev libsdl-net1.2-dev zlib1g-dev libbz2-dev
@@ -81,11 +81,9 @@ task legacy:build
 ./jumpnbump
 ```
 
-`make install` installs it to `$(PREFIX)/games` and `$(PREFIX)/share/jumpnbump`
-(`PREFIX=/usr/local` by default). `task legacy:clean` (`make clean`) cleans `sdl/`,
-`modify/`, `data/`, and the top-level objects/binaries. Its controls, custom-level,
-screensaver, and netplay flags/instructions are in the section above; `f10` toggles
-windowed/fullscreen, `esc`/`f12` quits.
+`task legacy:clean` cleans `sdl/`, `modify/`, `data/`, and the top-level objects/binaries.
+Its controls, custom-level, screensaver, and netplay flags/instructions are in the section
+above; `f10` toggles windowed/fullscreen, `esc`/`f12` quits.
 
 ## Building and testing
 
